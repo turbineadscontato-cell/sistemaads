@@ -11,6 +11,7 @@ enum Role {
   SOCIO
   GESTOR
   ATENDENTE
+  CLIENTE
 }
 
 enum ClientStatus {
@@ -56,6 +57,10 @@ model User {
   tasks          Task[]    @relation("GestorTasks")
   leads          Lead[]    @relation("AtendenteLeads")
   meetings       Meeting[] @relation("ResponsavelMeetings")
+
+  // Set only for role = CLIENTE: which client's portal this login can see.
+  clientId String?
+  client   Client? @relation("ClientPortalUser", fields: [clientId], references: [id])
 }
 
 model Client {
@@ -68,14 +73,21 @@ model Client {
   dailyAdBudget  Float?
   startDate      DateTime?
   notes          String?
+  optimizationDay   Int?     // day of month (1-31) the account should be optimized
+  activeCreative    String?  // short label for whichever creative is currently live
   createdAt      DateTime     @default(now())
 
   gestorId String?
   gestor   User?   @relation("GestorClients", fields: [gestorId], references: [id])
 
-  payments   Payment[]
-  tasks      Task[]
-  pendencies Pendency[]
+  payments    Payment[]
+  tasks       Task[]
+  pendencies  Pendency[]
+  meetings    Meeting[]
+  portalUsers User[]         @relation("ClientPortalUser")
+  clientLeads ClientLead[]
+  files       ClientFile[]
+  reports     MonthlyReport[]
 }
 
 model Payment {
@@ -134,13 +146,64 @@ model Lead {
 model Meeting {
   id        String   @id @default(cuid())
   scheduledAt DateTime
-  status    String   @default("agendada")
+  status    String   @default("agendada") // agendada | solicitada | confirmada | realizada | recusada
   notes     String?
+  requestedByClient Boolean @default(false)
   createdAt DateTime @default(now())
 
   leadId String?
   lead   Lead?  @relation(fields: [leadId], references: [id])
 
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id])
+
   responsavelId String?
   responsavel   User?  @relation("ResponsavelMeetings", fields: [responsavelId], references: [id])
+}
+
+// A client's own mini-CRM — leads the client logs themselves in their portal.
+// Separate from the agency's own Lead funnel above.
+model ClientLead {
+  id        String   @id @default(cuid())
+  name      String
+  contact   String?
+  origin    String?
+  status    String   @default("novo")
+  notes     String?
+  createdAt DateTime @default(now())
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+}
+
+// Small files (sales scripts, photos) stored inline as base64 — keeps the
+// feature working on Railway's ephemeral filesystem without an S3 bucket.
+model ClientFile {
+  id         String   @id @default(cuid())
+  name       String
+  mimeType   String
+  category   String   @default("OUTRO") // FOTO | SCRIPT | OUTRO
+  dataBase64 String   @db.Text
+  size       Int
+  createdAt  DateTime @default(now())
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+}
+
+model MonthlyReport {
+  id             String   @id @default(cuid())
+  month          String   // "2026-09"
+  spend          Float?
+  impressions    Int?
+  clicks         Int?
+  leadsCount     Int?
+  fechamentos    Int?
+  revenue        Float?
+  notes          String?
+  sourceFileName String?
+  createdAt      DateTime @default(now())
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 }

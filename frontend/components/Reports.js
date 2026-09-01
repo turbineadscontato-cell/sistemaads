@@ -91,7 +91,7 @@ export default function Reports() {
 
   return (
     <section className="space-y-6">
-      <div className="grid grid-cols-4 gap-3.5">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-3.5">
         <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">
           <div className="text-[11px] uppercase tracking-wide text-inkfaint">Faturamento previsto/mês</div>
           <div className="font-display font-bold text-xl mono mt-1 text-accent">{currency(data.faturamentoPrevisto)}</div>
@@ -110,8 +110,8 @@ export default function Reports() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div className="bg-surface border border-border rounded-xl p-4.5 shadow-sm">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="bg-surface border border-border rounded-xl p-4.5 shadow-sm overflow-x-auto">
           <h3 className="font-display font-semibold text-sm text-ink mb-4">Clientes por status</h3>
           <Donut data={statusData} />
         </div>

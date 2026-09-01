@@ -15,7 +15,10 @@ async function assertClientInScope(user, clientId) {
 }
 
 router.get("/", async (req, res) => {
-  const where = req.user.role === "SOCIO" ? {} : { client: { gestorId: req.user.id } };
+  let where = { id: "__none__" };
+  if (req.user.role === "SOCIO") where = {};
+  else if (req.user.role === "GESTOR") where = { client: { gestorId: req.user.id } };
+  else if (req.user.role === "CLIENTE") where = { clientId: req.user.clientId || "__none__" };
   const payments = await prisma.payment.findMany({
     where,
     include: { client: { select: { id: true, name: true } } },

@@ -10,6 +10,7 @@ router.use(requireAuth);
 function scopeFilter(user) {
   if (user.role === "SOCIO") return {};
   if (user.role === "GESTOR") return { gestorId: user.id };
+  if (user.role === "CLIENTE") return { id: user.clientId || "__none__" };
   return { id: "__none__" }; // ATENDENTE: matches nothing
 }
 
@@ -29,7 +30,23 @@ router.get("/", async (req, res) => {
   res.json(withCounts);
 });
 
-router.get("/:id", async (req, res) => {
+// Curated, read-only view for the client portal — no internal notes, no
+// internal task list, just what the client is meant to see about themselves.
+router.get("/me/portal", requireRole("CLIENTE"), async (req, res) => {
+  if (!req.user.clientId) return res.status(404).json({ error: "Login não vinculado a um cliente." });
+  const client = await prisma.client.findUnique({
+    where: { id: req.user.clientId },
+    include: {
+      gestor: { select: { id: true, name: true } },
+      payments: { orderBy: { dueDate: "desc" } },
+    },
+  });
+  if (!client) return res.status(404).json({ error: "Cliente não encontrado." });
+  const { notes, ...safe } = client;
+  res.json(safe);
+});
+
+router.get("/:id", requireRole("SOCIO", "GESTOR"), async (req, res) => {
   const client = await prisma.client.findFirst({
     where: { id: req.params.id, ...scopeFilter(req.user) },
     include: {
@@ -45,7 +62,7 @@ router.get("/:id", async (req, res) => {
 
 // Only sócios create/edit/delete clients and reassign gestores.
 router.post("/", requireRole("SOCIO"), async (req, res) => {
-  const { name, niche, status, plan, monthlyValue, dailyAdBudget, startDate, gestorId, notes } = req.body || {};
+  const { name, niche, status, plan, monthlyValue, dailyAdBudget, startDate, gestorId, notes, optimizationDay, activeCreative } = req.body || {};
   if (!name) return res.status(400).json({ error: "Nome do cliente é obrigatório." });
 
   const client = await prisma.client.create({
@@ -59,22 +76,32 @@ router.post("/", requireRole("SOCIO"), async (req, res) => {
       startDate: startDate ? new Date(startDate) : null,
       gestorId: gestorId || null,
       notes: notes || null,
+      optimizationDay: optimizationDay != null && optimizationDay !== "" ? Number(optimizationDay) : null,
+      activeCreative: activeCreative || null,
     },
   });
   res.status(201).json(client);
 });
 
 router.patch("/:id", requireRole("SOCIO", "GESTOR"), async (req, res) => {
-  // A gestor may only touch their own clients, and only the notes field.
+  // A gestor may only touch their own clients, and only a limited field set:
+  // day-to-day notes plus the two fields they're responsible for operationally.
   if (req.user.role === "GESTOR") {
     const owned = await prisma.client.findFirst({ where: { id: req.params.id, gestorId: req.user.id } });
     if (!owned) return res.status(403).json({ error: "Você não tem acesso a esse cliente." });
-    const { notes } = req.body || {};
-    const client = await prisma.client.update({ where: { id: req.params.id }, data: { notes } });
+    const { notes, optimizationDay, activeCreative } = req.body || {};
+    const client = await prisma.client.update({
+      where: { id: req.params.id },
+      data: {
+        ...(notes !== undefined && { notes }),
+        ...(optimizationDay !== undefined && { optimizationDay: optimizationDay != null && optimizationDay !== "" ? Number(optimizationDay) : null }),
+        ...(activeCreative !== undefined && { activeCreative: activeCreative || null }),
+      },
+    });
     return res.json(client);
   }
 
-  const { name, niche, status, plan, monthlyValue, dailyAdBudget, startDate, gestorId, notes } = req.body || {};
+  const { name, niche, status, plan, monthlyValue, dailyAdBudget, startDate, gestorId, notes, optimizationDay, activeCreative } = req.body || {};
   try {
     const client = await prisma.client.update({
       where: { id: req.params.id },
@@ -88,6 +115,8 @@ router.patch("/:id", requireRole("SOCIO", "GESTOR"), async (req, res) => {
         ...(startDate !== undefined && { startDate: startDate ? new Date(startDate) : null }),
         ...(gestorId !== undefined && { gestorId: gestorId || null }),
         ...(notes !== undefined && { notes }),
+        ...(optimizationDay !== undefined && { optimizationDay: optimizationDay != null && optimizationDay !== "" ? Number(optimizationDay) : null }),
+        ...(activeCreative !== undefined && { activeCreative: activeCreative || null }),
       },
     });
     res.json(client);

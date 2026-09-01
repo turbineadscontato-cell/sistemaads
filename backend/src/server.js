@@ -11,6 +11,10 @@ const leadRoutes = require("./routes/leads");
 const meetingRoutes = require("./routes/meetings");
 const userRoutes = require("./routes/users");
 const reportRoutes = require("./routes/reports");
+const fileRoutes = require("./routes/files");
+const monthlyReportRoutes = require("./routes/monthlyReports");
+const clientLeadRoutes = require("./routes/clientLeads");
+const aiRoutes = require("./routes/ai");
 
 const app = express();
 
@@ -39,6 +43,10 @@ app.use("/api/leads", leadRoutes);
 app.use("/api/meetings", meetingRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/reports", reportRoutes);
+app.use("/api/files", fileRoutes);
+app.use("/api/monthly-reports", monthlyReportRoutes);
+app.use("/api/client-leads", clientLeadRoutes);
+app.use("/api/ai", aiRoutes);
 
 app.use((req, res) => res.status(404).json({ error: "Rota não encontrada." }));
 

@@ -9,7 +9,7 @@ if (!JWT_SECRET) {
 
 function signToken(user) {
   return jwt.sign(
-    { sub: user.id, role: user.role, name: user.name },
+    { sub: user.id, role: user.role, name: user.name, clientId: user.clientId || null },
     JWT_SECRET,
     { expiresIn: "12h" }
   );
@@ -25,7 +25,7 @@ function requireAuth(req, res, next) {
 
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    req.user = { id: payload.sub, role: payload.role, name: payload.name };
+    req.user = { id: payload.sub, role: payload.role, name: payload.name, clientId: payload.clientId || null };
     return next();
   } catch (err) {
     return res.status(401).json({ error: "Token inválido ou expirado." });

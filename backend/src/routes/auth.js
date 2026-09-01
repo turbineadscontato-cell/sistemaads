@@ -26,7 +26,7 @@ router.post("/login", async (req, res) => {
   const token = signToken(user);
   return res.json({
     token,
-    user: { id: user.id, name: user.name, email: user.email, role: user.role },
+    user: { id: user.id, name: user.name, email: user.email, role: user.role, clientId: user.clientId || null },
   });
 });
 
@@ -34,7 +34,7 @@ router.post("/login", async (req, res) => {
 router.get("/me", requireAuth, async (req, res) => {
   const user = await prisma.user.findUnique({ where: { id: req.user.id } });
   if (!user || !user.active) return res.status(401).json({ error: "Usuário inválido." });
-  return res.json({ id: user.id, name: user.name, email: user.email, role: user.role });
+  return res.json({ id: user.id, name: user.name, email: user.email, role: user.role, clientId: user.clientId || null });
 });
 
 module.exports = router;

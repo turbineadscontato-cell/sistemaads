@@ -49,8 +49,8 @@ export default function LeadsKanban({ leads, onChange, loading }) {
 
   return (
     <div className="space-y-5">
-      <form onSubmit={createLead} className="bg-surface border border-border rounded-xl p-4 shadow-sm grid grid-cols-5 gap-2 items-end">
-        <div className="col-span-2">
+      <form onSubmit={createLead} className="bg-surface border border-border rounded-xl p-4 shadow-sm grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 items-end">
+        <div className="lg:col-span-2">
           <label className="block text-[11px] text-inkfaint mb-1">Nome do lead</label>
           <input required value={newLead.name} onChange={(e) => setNewLead({ ...newLead, name: e.target.value })}
             className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink" />

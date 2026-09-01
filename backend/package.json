@@ -7,9 +7,9 @@
     "dev": "node src/server.js",
     "start": "node src/server.js",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate deploy",
+    "prisma:push": "prisma db push --accept-data-loss",
     "seed": "node prisma/seed.js",
-    "release": "npm run prisma:migrate && npm run seed"
+    "release": "npm run prisma:push && npm run seed"
   },
   "dependencies": {
     "@prisma/client": "^5.20.0",
