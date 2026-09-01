@@ -80,14 +80,16 @@ model Client {
   gestorId String?
   gestor   User?   @relation("GestorClients", fields: [gestorId], references: [id])
 
-  payments    Payment[]
-  tasks       Task[]
-  pendencies  Pendency[]
-  meetings    Meeting[]
-  portalUsers User[]         @relation("ClientPortalUser")
-  clientLeads ClientLead[]
-  files       ClientFile[]
-  reports     MonthlyReport[]
+  payments     Payment[]
+  tasks        Task[]
+  pendencies   Pendency[]
+  meetings     Meeting[]
+  portalUsers  User[]          @relation("ClientPortalUser")
+  clientLeads  ClientLead[]
+  files        ClientFile[]
+  reports      MonthlyReport[]
+  patients     Patient[]
+  contentPosts ContentPost[]
 }
 
 model Payment {
@@ -203,6 +205,51 @@ model MonthlyReport {
   notes          String?
   sourceFileName String?
   createdAt      DateTime @default(now())
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+}
+
+// The client's own patient/appointment tracker (Trello-style), private to
+// the client portal — kept out of staff view by default for patient
+// confidentiality (agency staff never needed patient-level health data).
+model Patient {
+  id            String    @id @default(cuid())
+  name          String
+  contact       String?
+  status        String    @default("avaliacao") // avaliacao | acompanhamento | pausado | encerrado
+  sessionValue  Float?
+  paymentDueDay Int?      // day of month the patient's fee is due
+  paymentStatus String    @default("EM_DIA") // EM_DIA | PENDENTE | ATRASADO
+  nextSessionAt DateTime?
+  notes         String?
+  createdAt     DateTime  @default(now())
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  reports PatientNote[]
+}
+
+// Dated log entries per patient — session notes / progress reports.
+model PatientNote {
+  id        String   @id @default(cuid())
+  content   String
+  createdAt DateTime @default(now())
+
+  patientId String
+  patient   Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+}
+
+// Marketing/content calendar entries for the client's own social media.
+model ContentPost {
+  id            String   @id @default(cuid())
+  scheduledDate DateTime
+  title         String
+  theme         String?
+  status        String   @default("planejado") // planejado | produzido | publicado
+  notes         String?
+  createdAt     DateTime @default(now())
 
   clientId String
   client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)

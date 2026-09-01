@@ -8,6 +8,7 @@ import TaskTitleField from "../../../../components/TaskTitleField";
 import ClientFiles from "../../../../components/ClientFiles";
 import ClientReports from "../../../../components/ClientReports";
 import ClientLeadsBoard from "../../../../components/ClientLeadsBoard";
+import ContentCalendar from "../../../../components/ContentCalendar";
 
 const STATUS_LABEL = { ATIVO: "Ativo", PENDENTE_PAGAMENTO: "Pendente", ONBOARDING: "Onboarding", CANCELADO: "Cancelado" };
 const PAYMENT_LABEL = { PAGO: "Pago", PENDENTE: "Pendente", ATRASADO: "Atrasado" };
@@ -422,6 +423,10 @@ export default function ClientDetail() {
           <ClientFiles clientId={id} canManage={canOperate} showScriptGenerator={canOperate} allowClientUpload={false} />
           <ClientReports clientId={id} canManage={canOperate} />
           <ClientLeadsBoard clientId={id} canEdit={canOperate} />
+        </div>
+
+        <div className="mt-4">
+          <ContentCalendar clientId={id} />
         </div>
       </div>
     </div>
