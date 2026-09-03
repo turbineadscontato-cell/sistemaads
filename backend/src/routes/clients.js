@@ -62,7 +62,7 @@ router.get("/:id", requireRole("SOCIO", "GESTOR"), async (req, res) => {
 
 // Only sócios create/edit/delete clients and reassign gestores.
 router.post("/", requireRole("SOCIO"), async (req, res) => {
-  const { name, niche, status, plan, monthlyValue, dailyAdBudget, startDate, gestorId, notes, optimizationDay, activeCreative } = req.body || {};
+  const { name, niche, status, plan, monthlyValue, dailyAdBudget, startDate, gestorId, notes, optimizationDay, activeCreative, planType } = req.body || {};
   if (!name) return res.status(400).json({ error: "Nome do cliente é obrigatório." });
 
   const client = await prisma.client.create({
@@ -78,9 +78,31 @@ router.post("/", requireRole("SOCIO"), async (req, res) => {
       notes: notes || null,
       optimizationDay: optimizationDay != null && optimizationDay !== "" ? Number(optimizationDay) : null,
       activeCreative: activeCreative || null,
+      planType: planType === "SO_SISTEMA" ? "SO_SISTEMA" : "COMPLETO",
     },
   });
   res.status(201).json(client);
+});
+
+// Self-service white-label branding for the client's OWN patients' portal —
+// the client (professional) sets this from their own portal, not a sócio.
+// Never touches planType, which stays a commercial decision made by a sócio.
+router.patch("/me/branding", requireRole("CLIENTE"), async (req, res) => {
+  if (!req.user.clientId) return res.status(400).json({ error: "Login não vinculado a um cliente." });
+  const { brandName, logoBase64, logoMimeType } = req.body || {};
+  if (logoBase64 && logoBase64.length > 3_000_000) {
+    return res.status(400).json({ error: "Imagem muito grande — use um arquivo menor (até ~2MB)." });
+  }
+  const client = await prisma.client.update({
+    where: { id: req.user.clientId },
+    data: {
+      ...(brandName !== undefined && { brandName: brandName || null }),
+      ...(logoBase64 !== undefined && { logoBase64: logoBase64 || null }),
+      ...(logoMimeType !== undefined && { logoMimeType: logoMimeType || null }),
+    },
+    select: { id: true, brandName: true, logoBase64: true, logoMimeType: true },
+  });
+  res.json(client);
 });
 
 router.patch("/:id", requireRole("SOCIO", "GESTOR"), async (req, res) => {
@@ -101,7 +123,7 @@ router.patch("/:id", requireRole("SOCIO", "GESTOR"), async (req, res) => {
     return res.json(client);
   }
 
-  const { name, niche, status, plan, monthlyValue, dailyAdBudget, startDate, gestorId, notes, optimizationDay, activeCreative } = req.body || {};
+  const { name, niche, status, plan, monthlyValue, dailyAdBudget, startDate, gestorId, notes, optimizationDay, activeCreative, planType } = req.body || {};
   try {
     const client = await prisma.client.update({
       where: { id: req.params.id },
@@ -117,6 +139,7 @@ router.patch("/:id", requireRole("SOCIO", "GESTOR"), async (req, res) => {
         ...(notes !== undefined && { notes }),
         ...(optimizationDay !== undefined && { optimizationDay: optimizationDay != null && optimizationDay !== "" ? Number(optimizationDay) : null }),
         ...(activeCreative !== undefined && { activeCreative: activeCreative || null }),
+        ...(planType !== undefined && { planType: planType === "SO_SISTEMA" ? "SO_SISTEMA" : "COMPLETO" }),
       },
     });
     res.json(client);

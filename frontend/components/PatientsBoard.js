@@ -71,6 +71,14 @@ export default function PatientsBoard() {
   const [savingNote, setSavingNote] = useState(false);
   const [dragOverDay, setDragOverDay] = useState(null);
   const [movingId, setMovingId] = useState(null);
+  const [portalUserById, setPortalUserById] = useState({});
+  const [loginForm, setLoginForm] = useState({ email: "", password: "" });
+  const [savingLogin, setSavingLogin] = useState(false);
+  const [resetPasswordDraft, setResetPasswordDraft] = useState("");
+  const [showResetLogin, setShowResetLogin] = useState(false);
+  const [activitiesById, setActivitiesById] = useState({});
+  const [activityDraft, setActivityDraft] = useState({ title: "", dueDate: "" });
+  const [savingActivity, setSavingActivity] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -210,8 +218,15 @@ export default function PatientsBoard() {
       notes: p.notes || "",
       weekdays: p.weekdays || [],
       sessionTime: p.sessionTime || "",
+      meetLink: p.meetLink || "",
     });
+    setLoginForm({ email: "", password: "" });
+    setShowResetLogin(false);
+    setResetPasswordDraft("");
+    setActivityDraft({ title: "", dueDate: "" });
     if (!notesById[p.id]) loadNotes(p.id);
+    if (!(p.id in portalUserById)) loadPortalUser(p.id);
+    if (!activitiesById[p.id]) loadActivities(p.id);
   }
 
   async function loadNotes(patientId) {
@@ -220,6 +235,130 @@ export default function PatientsBoard() {
       setNotesById((n) => ({ ...n, [patientId]: notes }));
     } catch (err) {
       // silent
+    }
+  }
+
+  async function loadPortalUser(patientId) {
+    try {
+      const portalUser = await api(`/api/patients/${patientId}/portal-user`);
+      setPortalUserById((m) => ({ ...m, [patientId]: portalUser }));
+    } catch (err) {
+      // silent
+    }
+  }
+
+  async function loadActivities(patientId) {
+    try {
+      const activities = await api(`/api/patients/${patientId}/activities`);
+      setActivitiesById((m) => ({ ...m, [patientId]: activities }));
+    } catch (err) {
+      // silent
+    }
+  }
+
+  async function createLogin(p) {
+    if (!loginForm.email.trim() || !loginForm.password.trim()) return;
+    setSavingLogin(true);
+    try {
+      await api(`/api/patients/${p.id}/portal-user`, { method: "POST", body: { name: p.name, ...loginForm } });
+      setLoginForm({ email: "", password: "" });
+      loadPortalUser(p.id);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSavingLogin(false);
+    }
+  }
+
+  async function resetLoginPassword(p) {
+    if (!resetPasswordDraft.trim()) return;
+    setSavingLogin(true);
+    try {
+      await api(`/api/patients/${p.id}/portal-user`, { method: "PATCH", body: { password: resetPasswordDraft } });
+      setResetPasswordDraft("");
+      setShowResetLogin(false);
+      alert("Senha do paciente atualizada.");
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSavingLogin(false);
+    }
+  }
+
+  async function toggleLoginActive(p) {
+    const current = portalUserById[p.id];
+    if (!current) return;
+    try {
+      await api(`/api/patients/${p.id}/portal-user`, { method: "PATCH", body: { active: !current.active } });
+      loadPortalUser(p.id);
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  async function deleteLogin(p) {
+    if (!confirm(`Remover o login de acesso de "${p.name}"? Ele não vai mais conseguir entrar no portal dele.`)) return;
+    try {
+      await api(`/api/patients/${p.id}/portal-user`, { method: "DELETE" });
+      setPortalUserById((m) => ({ ...m, [p.id]: null }));
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  async function addActivity(p) {
+    if (!activityDraft.title.trim()) return;
+    setSavingActivity(true);
+    try {
+      await api(`/api/patients/${p.id}/activities`, {
+        method: "POST",
+        body: { title: activityDraft.title.trim(), dueDate: activityDraft.dueDate || undefined },
+      });
+      setActivityDraft({ title: "", dueDate: "" });
+      loadActivities(p.id);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSavingActivity(false);
+    }
+  }
+
+  async function toggleActivity(p, activity) {
+    try {
+      await api(`/api/patients/${p.id}/activities/${activity.id}`, {
+        method: "PATCH",
+        body: { status: activity.status === "concluida" ? "pendente" : "concluida" },
+      });
+      loadActivities(p.id);
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  async function deleteActivity(p, activityId) {
+    try {
+      await api(`/api/patients/${p.id}/activities/${activityId}`, { method: "DELETE" });
+      loadActivities(p.id);
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  async function respondRequest(p, approve) {
+    try {
+      await api(`/api/patients/${p.id}`, { method: "PATCH", body: approve ? { approveRequest: true } : { declineRequest: true } });
+      load();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  async function toggleNoteVisibility(p, note) {
+    try {
+      await api(`/api/patients/${p.id}/notes/${note.id}`, { method: "PATCH", body: { visibleToPatient: !note.visibleToPatient } });
+      loadNotes(p.id);
+    } catch (err) {
+      alert(err.message);
     }
   }
 
@@ -233,6 +372,7 @@ export default function PatientsBoard() {
           paymentDueDay: editForm.paymentDueDay || null,
           nextSessionAt: editForm.nextSessionAt || null,
           sessionTime: editForm.sessionTime || null,
+          meetLink: editForm.meetLink || null,
         },
       });
       load();
@@ -357,11 +497,25 @@ export default function PatientsBoard() {
                             {PAYMENT_LABEL[p.paymentStatus]}
                           </span>
                           {currency(p.sessionValue) && <span className="text-[10px] mono text-inkfaint">{currency(p.sessionValue)}</span>}
+                          {p.requestedSessionAt && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-warningsoft text-warning">pedido de remarcação</span>
+                          )}
                         </div>
                       </button>
 
                       {expanded && editForm && (
                         <div className="border-t border-border p-2.5 space-y-2 bg-surface">
+                          {p.requestedSessionAt && (
+                            <div className="bg-warningsoft border border-warning/30 rounded-md px-2.5 py-2 space-y-1.5">
+                              <div className="text-[10.5px] font-semibold text-warning">Pedido de remarcação do paciente</div>
+                              <div className="text-[11px] text-ink">Novo horário sugerido: <span className="mono">{fmtDateTime(p.requestedSessionAt)}</span></div>
+                              {p.requestNote && <div className="text-[10.5px] text-inksoft">"{p.requestNote}"</div>}
+                              <div className="flex gap-3 pt-0.5">
+                                <button onClick={() => respondRequest(p, true)} className="text-[11px] text-success font-medium hover:underline">Aprovar</button>
+                                <button onClick={() => respondRequest(p, false)} className="text-[11px] text-danger hover:underline">Recusar</button>
+                              </div>
+                            </div>
+                          )}
                           <div className="flex flex-wrap gap-1">
                             {STAGES.filter((s) => s.key !== p.status).map((s) => (
                               <button key={s.key} onClick={() => moveStage(p, s.key)}
@@ -406,6 +560,12 @@ export default function PatientsBoard() {
                             </div>
                           </div>
 
+                          <div>
+                            <label className="block text-[10.5px] text-inkfaint mb-1">Link da sessão (Google Meet)</label>
+                            <input value={editForm.meetLink} onChange={(e) => setEditForm({ ...editForm, meetLink: e.target.value })} placeholder="https://meet.google.com/xxx-xxxx-xxx"
+                              className="w-full px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink" />
+                          </div>
+
                           <div className="flex items-center justify-between gap-2">
                             <button onClick={() => saveEdit(p)} className="text-[11px] bg-accent text-white font-medium px-2.5 py-1 rounded-md hover:bg-accentink">
                               Salvar
@@ -421,7 +581,13 @@ export default function PatientsBoard() {
                             <div className="space-y-1.5 max-h-32 overflow-y-auto">
                               {(notesById[p.id] || []).map((n) => (
                                 <div key={n.id} className="text-[11px] bg-surface2 border border-border rounded-md px-2 py-1.5">
-                                  <div className="text-[10px] text-inkfaint mono">{fmtDateTime(n.createdAt)}</div>
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="text-[10px] text-inkfaint mono">{fmtDateTime(n.createdAt)}</div>
+                                    <label className="flex items-center gap-1 text-[10px] text-inkfaint cursor-pointer shrink-0">
+                                      <input type="checkbox" checked={!!n.visibleToPatient} onChange={() => toggleNoteVisibility(p, n)} className="accent-accent w-3 h-3" />
+                                      visível pro paciente
+                                    </label>
+                                  </div>
                                   <div className="text-ink whitespace-pre-wrap mt-0.5">{n.content}</div>
                                 </div>
                               ))}
@@ -435,6 +601,75 @@ export default function PatientsBoard() {
                                 {savingNote ? "…" : "Add"}
                               </button>
                             </div>
+                          </div>
+
+                          <div className="border-t border-border pt-2 space-y-1.5">
+                            <div className="text-[10.5px] font-semibold uppercase tracking-wide text-inkfaint">Atividades</div>
+                            <div className="space-y-1 max-h-28 overflow-y-auto">
+                              {(activitiesById[p.id] || []).map((a) => (
+                                <div key={a.id} className="flex items-center gap-1.5 text-[11px] bg-surface2 border border-border rounded-md px-2 py-1">
+                                  <input type="checkbox" checked={a.status === "concluida"} onChange={() => toggleActivity(p, a)} className="accent-accent w-3 h-3 shrink-0" />
+                                  <span className={`flex-1 min-w-0 truncate ${a.status === "concluida" ? "line-through text-inkfaint" : "text-ink"}`}>{a.title}</span>
+                                  {a.dueDate && <span className="text-[10px] text-inkfaint mono shrink-0">{fmtDate(a.dueDate)}</span>}
+                                  <button onClick={() => deleteActivity(p, a.id)} className="text-inkfaint hover:text-danger shrink-0 leading-none">×</button>
+                                </div>
+                              ))}
+                              {(activitiesById[p.id] || []).length === 0 && <div className="text-[10.5px] text-inkfaint">Nenhuma atividade ainda.</div>}
+                            </div>
+                            <div className="flex gap-1.5">
+                              <input value={activityDraft.title} onChange={(e) => setActivityDraft({ ...activityDraft, title: e.target.value })} placeholder="Nova atividade…"
+                                className="flex-1 px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink" />
+                              <input type="date" value={activityDraft.dueDate} onChange={(e) => setActivityDraft({ ...activityDraft, dueDate: e.target.value })}
+                                className="w-28 px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink mono" />
+                              <button onClick={() => addActivity(p)} disabled={savingActivity}
+                                className="text-[11px] bg-accent text-white font-medium px-2.5 rounded-md hover:bg-accentink disabled:opacity-60">
+                                {savingActivity ? "…" : "Add"}
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="border-t border-border pt-2 space-y-1.5">
+                            <div className="text-[10.5px] font-semibold uppercase tracking-wide text-inkfaint">Acesso do paciente ao portal dele</div>
+                            {portalUserById[p.id] === undefined && <div className="text-[10.5px] text-inkfaint">Carregando…</div>}
+                            {portalUserById[p.id] === null && (
+                              <div className="flex flex-col sm:flex-row gap-1.5">
+                                <input type="email" value={loginForm.email} onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })} placeholder="Email do paciente"
+                                  className="flex-1 px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink" />
+                                <input value={loginForm.password} onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })} placeholder="Senha"
+                                  className="w-28 px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink" />
+                                <button onClick={() => createLogin(p)} disabled={savingLogin}
+                                  className="text-[11px] bg-accent text-white font-medium px-2.5 py-1 rounded-md hover:bg-accentink disabled:opacity-60 shrink-0">
+                                  {savingLogin ? "…" : "Criar login"}
+                                </button>
+                              </div>
+                            )}
+                            {portalUserById[p.id] && (
+                              <div className="space-y-1.5">
+                                <div className="flex items-center justify-between gap-2 text-[11px]">
+                                  <div className="min-w-0">
+                                    <div className="text-ink truncate">{portalUserById[p.id].email}</div>
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${portalUserById[p.id].active ? "bg-successsoft text-success" : "bg-dangersoft text-danger"}`}>
+                                      {portalUserById[p.id].active ? "Ativo" : "Desativado"}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-2.5 shrink-0">
+                                    <button onClick={() => toggleLoginActive(p)} className="text-inksoft hover:text-accent">{portalUserById[p.id].active ? "Desativar" : "Reativar"}</button>
+                                    <button onClick={() => setShowResetLogin((v) => !v)} className="text-inksoft hover:text-accent">Redefinir senha</button>
+                                    <button onClick={() => deleteLogin(p)} className="text-danger hover:underline">Remover</button>
+                                  </div>
+                                </div>
+                                {showResetLogin && (
+                                  <div className="flex gap-1.5">
+                                    <input value={resetPasswordDraft} onChange={(e) => setResetPasswordDraft(e.target.value)} placeholder="Nova senha"
+                                      className="flex-1 px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink" />
+                                    <button onClick={() => resetLoginPassword(p)} disabled={savingLogin}
+                                      className="text-[11px] bg-accent text-white font-medium px-2.5 rounded-md hover:bg-accentink disabled:opacity-60">
+                                      Salvar
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
                       )}

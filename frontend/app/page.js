@@ -12,9 +12,15 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  function destinationFor(role) {
+    if (role === "CLIENTE") return "/portal";
+    if (role === "PACIENTE") return "/paciente-portal";
+    return "/dashboard";
+  }
+
   useEffect(() => {
     const u = getUser();
-    if (u) router.replace(u.role === "CLIENTE" ? "/portal" : "/dashboard");
+    if (u) router.replace(destinationFor(u.role));
   }, [router]);
 
   async function handleSubmit(e) {
@@ -24,7 +30,7 @@ export default function LoginPage() {
     try {
       const data = await api("/api/auth/login", { method: "POST", body: { email, password } });
       setSession(data.token, data.user);
-      router.push(data.user.role === "CLIENTE" ? "/portal" : "/dashboard");
+      router.push(destinationFor(data.user.role));
     } catch (err) {
       setError(err.message || "Não foi possível entrar.");
     } finally {

@@ -18,6 +18,7 @@ const aiRoutes = require("./routes/ai");
 const patientRoutes = require("./routes/patients");
 const contentPostRoutes = require("./routes/contentPosts");
 const metaRoutes = require("./routes/meta");
+const patientPortalRoutes = require("./routes/patientPortal");
 
 const app = express();
 
@@ -33,7 +34,10 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json());
+// Raised from Express's 100kb default — client files, monthly-report CSVs and
+// now branding logos travel as base64 JSON, which runs noticeably bigger than
+// the original binary.
+app.use(express.json({ limit: "8mb" }));
 
 app.get("/health", (req, res) => res.json({ ok: true }));
 
@@ -53,6 +57,7 @@ app.use("/api/ai", aiRoutes);
 app.use("/api/patients", patientRoutes);
 app.use("/api/content-posts", contentPostRoutes);
 app.use("/api/meta", metaRoutes);
+app.use("/api/patient-portal", patientPortalRoutes);
 
 app.use((req, res) => res.status(404).json({ error: "Rota não encontrada." }));
 

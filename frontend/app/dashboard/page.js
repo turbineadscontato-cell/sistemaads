@@ -62,6 +62,10 @@ export default function Dashboard() {
       router.replace("/portal");
       return;
     }
+    if (u.role === "PACIENTE") {
+      router.replace("/paciente-portal");
+      return;
+    }
     setUser(u);
     setTab(u.role === "ATENDENTE" ? "atendimento" : "clientes");
   }, [router]);

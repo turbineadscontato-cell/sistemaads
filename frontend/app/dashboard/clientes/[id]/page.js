@@ -52,6 +52,7 @@ export default function ClientDetail() {
     const u = getUser();
     if (!u) { router.replace("/"); return; }
     if (u.role === "CLIENTE") { router.replace("/portal"); return; }
+    if (u.role === "PACIENTE") { router.replace("/paciente-portal"); return; }
     setUser(u);
     if (u.role === "SOCIO") api("/api/users/gestores").then(setGestores).catch(() => {});
   }, [router]);
@@ -93,6 +94,7 @@ export default function ClientDetail() {
       gestorId: client.gestorId || "",
       optimizationDay: client.optimizationDay ?? "",
       activeCreative: client.activeCreative || "",
+      planType: client.planType || "COMPLETO",
     });
     setEditing(true);
   }
@@ -180,6 +182,7 @@ export default function ClientDetail() {
   const canEdit = user.role === "SOCIO";
   const canOperate = user.role === "SOCIO" || (user.role === "GESTOR" && client.gestorId === user.id);
   const canNotes = canOperate;
+  const isSoSistema = client.planType === "SO_SISTEMA";
 
   return (
     <div className="min-h-screen bg-bg">
@@ -192,6 +195,9 @@ export default function ClientDetail() {
             <div className="flex flex-wrap items-center gap-2 mt-1.5">
               <span className={`pill pill-${client.status}`}>{STATUS_LABEL[client.status]}</span>
               <span className="text-xs text-inkfaint">{client.niche || "nicho não informado"}</span>
+              {isSoSistema && (
+                <span className="text-[10.5px] px-2 py-0.5 rounded-full font-medium bg-surface2 text-inksoft border border-border">Só sistema</span>
+              )}
             </div>
           </div>
           {canOperate && !editing && (
@@ -232,6 +238,14 @@ export default function ClientDetail() {
                     placeholder="R$ 297/mês" className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink" />
                 </div>
                 <div>
+                  <label className="block text-[11px] text-inkfaint mb-1">Tipo de plano</label>
+                  <select value={editForm.planType} onChange={(e) => setEditForm({ ...editForm, planType: e.target.value })}
+                    className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink">
+                    <option value="COMPLETO">Completo (tráfego + sistema)</option>
+                    <option value="SO_SISTEMA">Só sistema (cancelou o tráfego)</option>
+                  </select>
+                </div>
+                <div>
                   <label className="block text-[11px] text-inkfaint mb-1">Valor mensal</label>
                   <input type="number" step="0.01" value={editForm.monthlyValue} onChange={(e) => setEditForm({ ...editForm, monthlyValue: e.target.value })}
                     className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink mono" />
@@ -260,6 +274,8 @@ export default function ClientDetail() {
                     placeholder="ex: Vídeo depoimento v3" className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink" />
                 </div>
               </div>
+            ) : isSoSistema ? (
+              <p className="text-xs text-inkfaint">Esse cliente está no plano só sistema — sem campos de tráfego pago para editar aqui.</p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <div>
@@ -292,22 +308,28 @@ export default function ClientDetail() {
             <div className="text-[11px] uppercase tracking-wide text-inkfaint">Valor mensal</div>
             <div className="font-display font-semibold text-base mt-1 mono text-accent">{currency(client.monthlyValue)}</div>
           </div>
-          <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">
-            <div className="text-[11px] uppercase tracking-wide text-inkfaint">Verba diária</div>
-            <div className="font-display font-semibold text-base mt-1 mono text-ink">{currency(client.dailyAdBudget)}</div>
-          </div>
+          {!isSoSistema && (
+            <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">
+              <div className="text-[11px] uppercase tracking-wide text-inkfaint">Verba diária</div>
+              <div className="font-display font-semibold text-base mt-1 mono text-ink">{currency(client.dailyAdBudget)}</div>
+            </div>
+          )}
           <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">
             <div className="text-[11px] uppercase tracking-wide text-inkfaint">Gestor</div>
             <div className="font-display font-semibold text-base mt-1 text-ink truncate">{client.gestor?.name || "—"}</div>
           </div>
-          <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">
-            <div className="text-[11px] uppercase tracking-wide text-inkfaint">Dia de otimização</div>
-            <div className="font-display font-semibold text-base mt-1 mono text-ink">{client.optimizationDay || "—"}</div>
-          </div>
-          <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">
-            <div className="text-[11px] uppercase tracking-wide text-inkfaint">Criativo ativo</div>
-            <div className="font-display font-semibold text-base mt-1 text-ink truncate">{client.activeCreative || "—"}</div>
-          </div>
+          {!isSoSistema && (
+            <>
+              <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">
+                <div className="text-[11px] uppercase tracking-wide text-inkfaint">Dia de otimização</div>
+                <div className="font-display font-semibold text-base mt-1 mono text-ink">{client.optimizationDay || "—"}</div>
+              </div>
+              <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">
+                <div className="text-[11px] uppercase tracking-wide text-inkfaint">Criativo ativo</div>
+                <div className="font-display font-semibold text-base mt-1 text-ink truncate">{client.activeCreative || "—"}</div>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -421,7 +443,7 @@ export default function ClientDetail() {
           </div>
 
           <ClientFiles clientId={id} canManage={canOperate} showScriptGenerator={canOperate} allowClientUpload={false} />
-          <ClientReports clientId={id} canManage={canOperate} />
+          {!isSoSistema && <ClientReports clientId={id} canManage={canOperate} />}
           <ClientLeadsBoard clientId={id} canEdit={canOperate} />
         </div>
 

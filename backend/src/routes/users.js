@@ -18,7 +18,10 @@ router.get("/gestores", async (req, res) => {
 });
 
 router.get("/", requireRole("SOCIO"), async (req, res) => {
+  // Patient portal logins (role PACIENTE) are managed by the professional
+  // from their own portal (see /api/patients/:id/portal-user), not here.
   const users = await prisma.user.findMany({
+    where: { role: { not: "PACIENTE" } },
     select: { id: true, name: true, email: true, role: true, active: true, createdAt: true, clientId: true, client: { select: { name: true } } },
     orderBy: { name: "asc" },
   });

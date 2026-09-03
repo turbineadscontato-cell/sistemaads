@@ -12,6 +12,10 @@ enum Role {
   GESTOR
   ATENDENTE
   CLIENTE
+  // A patient/end-client of one of our CLIENTE accounts (a therapist reselling
+  // the system to their own patients). Scoped to exactly one Patient via
+  // User.patientId — never sees anything about the agency or other patients.
+  PACIENTE
 }
 
 enum ClientStatus {
@@ -62,6 +66,11 @@ model User {
   // Set only for role = CLIENTE: which client's portal this login can see.
   clientId String?
   client   Client? @relation("ClientPortalUser", fields: [clientId], references: [id])
+
+  // Set only for role = PACIENTE: which patient record this login can see.
+  // Cascades so removing a patient removes their portal login with it.
+  patientId String?
+  patient   Patient? @relation("PatientPortalUser", fields: [patientId], references: [id], onDelete: Cascade)
 }
 
 model Client {
@@ -77,6 +86,19 @@ model Client {
   optimizationDay   Int?     // day of month (1-31) the account should be optimized
   activeCreative    String?  // short label for whichever creative is currently live
   createdAt      DateTime     @default(now())
+
+  // COMPLETO = tráfego pago + sistema. SO_SISTEMA = cliente cancelou o
+  // tráfego mas continua pagando só pelo sistema (Pacientes/CRM/agenda/etc).
+  // Sócio-only, muda o que aparece no portal (esconde métricas de anúncio).
+  planType String @default("COMPLETO") // COMPLETO | SO_SISTEMA
+
+  // White-label do PORTAL DOS PACIENTES desse cliente (não do portal do
+  // próprio cliente, que continua com a marca TurbinaADS). O próprio cliente
+  // (profissional) configura isso pelo portal dele, self-service — pensado
+  // para quando a agência revende o sistema fora do plano de tráfego pago.
+  brandName    String?
+  logoBase64   String?  @db.Text
+  logoMimeType String?
 
   gestorId String?
   gestor   User?   @relation("GestorClients", fields: [gestorId], references: [id])
@@ -233,16 +255,59 @@ model Patient {
   weekdays    Int[]   @default([])
   sessionTime String? // "HH:MM", the usual time for these weekly sessions
 
+  // Recurring video-call link for this patient's sessions (e.g. a fixed
+  // Google Meet room the professional reuses). Just a plain URL — no
+  // calendar/Meet API integration.
+  meetLink String?
+
+  // Set by the patient from their own portal when they ask to change their
+  // next session — the professional approves (copies into nextSessionAt and
+  // clears these) or declines (just clears these) from PatientsBoard.
+  requestedSessionAt DateTime?
+  requestNote        String?
+
   clientId String
   client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
-  reports PatientNote[]
+  reports    PatientNote[]
+  activities PatientActivity[]
+  journal    PatientJournalEntry[]
+  portalUser User[]                @relation("PatientPortalUser")
 }
 
-// Dated log entries per patient — session notes / progress reports.
+// Dated log entries per patient — session notes / progress reports written
+// by the professional. Private by default: visibleToPatient opts a specific
+// entry into showing up in that patient's own portal.
 model PatientNote {
+  id               String   @id @default(cuid())
+  content          String
+  visibleToPatient Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  patientId String
+  patient   Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+}
+
+// A task/homework the professional assigns a patient between sessions —
+// patient can mark it done from their own portal.
+model PatientActivity {
+  id          String    @id @default(cuid())
+  title       String
+  description String?
+  status      String    @default("pendente") // pendente | concluida
+  dueDate     DateTime?
+  createdAt   DateTime  @default(now())
+
+  patientId String
+  patient   Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+}
+
+// The patient's own "como foi seu dia" check-in/diary entry — written by the
+// patient, readable by the professional alongside the session notes.
+model PatientJournalEntry {
   id        String   @id @default(cuid())
-  content   String
+  mood      String? // free-form label chosen by the patient, e.g. "bem", "dificil"
+  note      String?
   createdAt DateTime @default(now())
 
   patientId String

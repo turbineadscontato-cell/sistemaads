@@ -10,11 +10,16 @@ import ClientLeadsBoard from "../../components/ClientLeadsBoard";
 import PatientsBoard from "../../components/PatientsBoard";
 import ContentCalendar from "../../components/ContentCalendar";
 import ClientMarketingAI from "../../components/ClientMarketingAI";
+import BrandingSettings from "../../components/BrandingSettings";
 
 const STATUS_LABEL = { ATIVO: "Ativo", PENDENTE_PAGAMENTO: "Pendente de pagamento", ONBOARDING: "Em onboarding", CANCELADO: "Cancelado" };
 const PAYMENT_LABEL = { PAGO: "Pago", PENDENTE: "Pendente", ATRASADO: "Atrasado" };
 const MEETING_STATUS_LABEL = { agendada: "Agendada", solicitada: "Aguardando confirmação", confirmada: "Confirmada", realizada: "Realizada", recusada: "Não foi possível" };
 
+// traffic: true marks tabs that only make sense while paid traffic is part
+// of the plan — hidden once the client is on planType "SO_SISTEMA" (kept the
+// system, cancelled the ads). Everything else (IA, Pacientes, conteúdo,
+// leads, arquivos) is plan-agnostic and always shows.
 const TABS = [
   { key: "geral", label: "Visão geral" },
   { key: "ia", label: "IA de Marketing" },
@@ -22,7 +27,8 @@ const TABS = [
   { key: "conteudo", label: "Calendário de conteúdo" },
   { key: "leads", label: "Meus leads" },
   { key: "arquivos", label: "Arquivos" },
-  { key: "relatorios", label: "Relatórios" },
+  { key: "relatorios", label: "Relatórios", traffic: true },
+  { key: "marca", label: "Marca" },
 ];
 
 function fmtDate(d) {
@@ -51,6 +57,7 @@ export default function ClientPortal() {
   useEffect(() => {
     const u = getUser();
     if (!u) { router.replace("/"); return; }
+    if (u.role === "PACIENTE") { router.replace("/paciente-portal"); return; }
     if (u.role !== "CLIENTE") { router.replace("/dashboard"); return; }
     setUser(u);
   }, [router]);
@@ -111,6 +118,9 @@ export default function ClientPortal() {
     .filter((m) => m.status !== "realizada" && m.status !== "recusada")
     .sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt));
 
+  const isSoSistema = client.planType === "SO_SISTEMA";
+  const visibleTabs = TABS.filter((t) => !t.traffic || !isSoSistema);
+
   return (
     <div className="min-h-screen bg-bg">
       <div className="sticky top-0 z-10 bg-sidebar border-b border-border">
@@ -123,7 +133,7 @@ export default function ClientPortal() {
           </div>
         </div>
         <nav className="flex gap-1 px-4 sm:px-6 pb-2 overflow-x-auto">
-          {TABS.map((t) => (
+          {visibleTabs.map((t) => (
             <button key={t.key} onClick={() => setTab(t.key)}
               className={`shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition ${tab === t.key ? "bg-accent text-white" : "text-[#a89f92] hover:text-white hover:bg-white/5"}`}>
               {t.label}
@@ -138,7 +148,12 @@ export default function ClientPortal() {
             <div>
               <div className="text-[11px] uppercase tracking-wide text-inkfaint">Portal do cliente</div>
               <h1 className="font-display font-bold text-2xl text-ink">{client.name}</h1>
-              <span className={`pill pill-${client.status} mt-1.5 inline-flex`}>{STATUS_LABEL[client.status]}</span>
+              <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                <span className={`pill pill-${client.status}`}>{STATUS_LABEL[client.status]}</span>
+                {isSoSistema && (
+                  <span className="text-[10.5px] px-2 py-0.5 rounded-full font-medium bg-surface2 text-inksoft border border-border">Plano: só sistema</span>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-3.5">
@@ -150,21 +165,25 @@ export default function ClientPortal() {
                 <div className="text-[11px] uppercase tracking-wide text-inkfaint">Investimento mensal</div>
                 <div className="font-display font-semibold text-base mt-1 mono text-accent">{currency(client.monthlyValue)}</div>
               </div>
-              <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">
-                <div className="text-[11px] uppercase tracking-wide text-inkfaint">Verba diária de anúncios</div>
-                <div className="font-display font-semibold text-base mt-1 mono text-ink">{currency(client.dailyAdBudget)}</div>
-              </div>
-              <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">
-                <div className="text-[11px] uppercase tracking-wide text-inkfaint">Criativo em veiculação</div>
-                <div className="font-display font-semibold text-base mt-1 text-ink truncate">{client.activeCreative || "—"}</div>
-              </div>
+              {!isSoSistema && (
+                <>
+                  <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">
+                    <div className="text-[11px] uppercase tracking-wide text-inkfaint">Verba diária de anúncios</div>
+                    <div className="font-display font-semibold text-base mt-1 mono text-ink">{currency(client.dailyAdBudget)}</div>
+                  </div>
+                  <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">
+                    <div className="text-[11px] uppercase tracking-wide text-inkfaint">Criativo em veiculação</div>
+                    <div className="font-display font-semibold text-base mt-1 text-ink truncate">{client.activeCreative || "—"}</div>
+                  </div>
+                  <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">
+                    <div className="text-[11px] uppercase tracking-wide text-inkfaint">Dia de otimização</div>
+                    <div className="font-display font-semibold text-base mt-1 mono text-ink">{client.optimizationDay || "—"}</div>
+                  </div>
+                </>
+              )}
               <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">
                 <div className="text-[11px] uppercase tracking-wide text-inkfaint">Gestor responsável</div>
                 <div className="font-display font-semibold text-base mt-1 text-ink truncate">{client.gestor?.name || "—"}</div>
-              </div>
-              <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">
-                <div className="text-[11px] uppercase tracking-wide text-inkfaint">Dia de otimização</div>
-                <div className="font-display font-semibold text-base mt-1 mono text-ink">{client.optimizationDay || "—"}</div>
               </div>
             </div>
 
@@ -225,7 +244,8 @@ export default function ClientPortal() {
         {tab === "conteudo" && <ContentCalendar clientId={client.id} />}
         {tab === "leads" && <ClientLeadsBoard clientId={client.id} canEdit />}
         {tab === "arquivos" && <ClientFiles clientId={client.id} canManage={false} allowClientUpload showScriptGenerator={false} />}
-        {tab === "relatorios" && <ClientReports clientId={client.id} canManage={false} />}
+        {tab === "relatorios" && !isSoSistema && <ClientReports clientId={client.id} canManage={false} />}
+        {tab === "marca" && <BrandingSettings client={client} onChange={load} />}
       </div>
     </div>
   );
