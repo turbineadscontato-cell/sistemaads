@@ -78,6 +78,46 @@ function fmtScheduleDateTime(d) {
   if (!d) return "";
   return new Date(d).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
 }
+// Live, client-side mirror of backend/src/utils/sessionSchedule.js — computes
+// the package preview from whatever is currently typed in the edit form
+// (weekdays, horário, data de início, quantidade), even before it's saved.
+// This is what makes the preview list react immediately when the professional
+// sets the horário, instead of only updating after clicking Salvar + reload.
+// Same UTC-only rule as the backend version, for the same reason: the date
+// input is a plain "YYYY-MM-DD" value, always parsed as UTC midnight.
+function computeScheduleClientSide(form) {
+  const total = Number(form.packageTotalSessions);
+  const weekdays = form.weekdays || [];
+  if (!total || total <= 0 || weekdays.length === 0 || !form.packageStartDate) return null;
+
+  const cursor = new Date(form.packageStartDate);
+  cursor.setUTCHours(0, 0, 0, 0);
+
+  let hours = null;
+  let minutes = 0;
+  if (form.sessionTime && /^\d{1,2}:\d{2}$/.test(form.sessionTime)) {
+    const [h, m] = form.sessionTime.split(":").map(Number);
+    hours = h;
+    minutes = m;
+  }
+
+  const marked = new Set(weekdays);
+  const dates = [];
+  let guard = 0;
+  while (dates.length < total && guard < 3650) {
+    if (marked.has(cursor.getUTCDay())) {
+      const d = new Date(cursor);
+      if (hours != null) d.setUTCHours(hours, minutes, 0, 0);
+      dates.push(d.toISOString());
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    guard++;
+  }
+
+  const now = new Date();
+  const completed = dates.filter((d) => new Date(d) < now).length;
+  return { total, dates, completed };
+}
 
 const EMPTY_FORM = { name: "", contact: "", sessionValue: "", paymentDueDay: "", paymentStatus: "EM_DIA", nextSessionAt: "", notes: "", weekdays: [], sessionTime: "" };
 
@@ -546,26 +586,38 @@ export default function PatientsBoard() {
                                 onChange={(e) => setEditForm({ ...editForm, packageStartDate: e.target.value })}
                                 className="px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink mono" />
                             </div>
+                            <div className="flex items-center gap-1.5 mt-1.5">
+                              <span className="text-[10.5px] text-inkfaint">Horário das sessões:</span>
+                              <input type="time" value={editForm.sessionTime} onChange={(e) => setEditForm({ ...editForm, sessionTime: e.target.value })}
+                                className="px-1.5 py-1 text-[11px] rounded-md border border-border bg-surface2 text-ink mono w-[88px]" />
+                              <span className="text-[10px] text-inkfaint">(mesmo horário usado nos dias de atendimento acima)</span>
+                            </div>
                             <div className="text-[10px] text-inkfaint mt-1">
                               {editForm.weekdays.length > 0
-                                ? `${editForm.weekdays.length}x por semana (baseado nos dias marcados acima) — as datas são calculadas automaticamente a partir da data de início.`
+                                ? `${editForm.weekdays.length}x por semana (baseado nos dias marcados acima) — as datas são calculadas automaticamente a partir da data de início. Lembre de clicar em Salvar pra confirmar.`
                                 : "Marque pelo menos um dia de atendimento acima pra calcular as datas."}
                             </div>
-                            {p.sessionSchedule && (
-                              <div className="mt-2 bg-surface2 border border-border rounded-md px-2 py-1.5 space-y-1">
-                                <div className="flex items-center justify-between text-[10.5px]">
-                                  <span className="text-inksoft font-medium">{p.sessionSchedule.completed}/{p.sessionSchedule.total} sessões realizadas</span>
+                            {(() => {
+                              // Computed live from the edit form (not from the server's p.sessionSchedule)
+                              // so the preview reacts instantly to horário/dias/data/quantidade changes,
+                              // even before Salvar is clicked.
+                              const liveSchedule = computeScheduleClientSide(editForm);
+                              return liveSchedule && (
+                                <div className="mt-2 bg-surface2 border border-border rounded-md px-2 py-1.5 space-y-1">
+                                  <div className="flex items-center justify-between text-[10.5px]">
+                                    <span className="text-inksoft font-medium">{liveSchedule.completed}/{liveSchedule.total} sessões realizadas</span>
+                                  </div>
+                                  <div className="max-h-24 overflow-y-auto space-y-0.5">
+                                    {liveSchedule.dates.map((d, i) => (
+                                      <div key={d} className={`flex items-center justify-between text-[10px] ${new Date(d) < new Date() ? "text-inkfaint line-through" : "text-ink"}`}>
+                                        <span>Sessão {i + 1}</span>
+                                        <span className="mono">{fmtScheduleWeekday(d)}, {fmtScheduleDateTime(d)}</span>
+                                      </div>
+                                    ))}
+                                  </div>
                                 </div>
-                                <div className="max-h-24 overflow-y-auto space-y-0.5">
-                                  {p.sessionSchedule.dates.map((d, i) => (
-                                    <div key={d} className={`flex items-center justify-between text-[10px] ${new Date(d) < new Date() ? "text-inkfaint line-through" : "text-ink"}`}>
-                                      <span>Sessão {i + 1}</span>
-                                      <span className="mono">{fmtScheduleWeekday(d)}, {fmtScheduleDateTime(d)}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
+                              );
+                            })()}
                           </div>
 
                           <div className="border-t border-border pt-2">
