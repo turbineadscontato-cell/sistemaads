@@ -502,8 +502,8 @@ export default function PatientsBoard() {
                 {items.map((p) => {
                   const expanded = expandedId === p.id;
                   return (
-                    <div key={p.id} className="border border-border rounded-lg bg-surface2 overflow-hidden">
-                      <button onClick={() => openCard(p)} className="w-full text-left px-2.5 py-2">
+                    <div key={p.id} className={`border rounded-xl bg-surface2 overflow-hidden transition ${expanded ? "border-accent shadow-[0_0_0_1px_rgba(255,122,26,0.4)]" : "border-border"}`}>
+                      <button onClick={() => openCard(p)} className="w-full text-left px-3 py-2.5 hover:bg-white/[0.03] transition">
                         <div className="text-sm text-ink font-medium truncate">{p.name}</div>
                         <div className="flex items-center flex-wrap gap-1.5 mt-1">
                           {p.nextSessionAt && (
@@ -518,211 +518,6 @@ export default function PatientsBoard() {
                           )}
                         </div>
                       </button>
-
-                      {expanded && editForm && (
-                        <div className="border-t border-border p-2.5 space-y-2 bg-surface">
-                          {p.requestedSessionAt && (
-                            <div className="bg-warningsoft border border-warning/30 rounded-md px-2.5 py-2 space-y-1.5">
-                              <div className="text-[10.5px] font-semibold text-warning">Pedido de remarcação do paciente</div>
-                              <div className="text-[11px] text-ink">Novo horário sugerido: <span className="mono">{fmtDateTime(p.requestedSessionAt)}</span></div>
-                              {p.requestNote && <div className="text-[10.5px] text-inksoft">"{p.requestNote}"</div>}
-                              <div className="flex gap-3 pt-0.5">
-                                <button onClick={() => respondRequest(p, true)} className="text-[11px] text-success font-medium hover:underline">Aprovar</button>
-                                <button onClick={() => respondRequest(p, false)} className="text-[11px] text-danger hover:underline">Recusar</button>
-                              </div>
-                            </div>
-                          )}
-                          <div className="flex flex-wrap gap-1">
-                            {STAGES.filter((s) => s.key !== p.status).map((s) => (
-                              <button key={s.key} onClick={() => moveStage(p, s.key)}
-                                className="text-[10.5px] px-2 py-1 rounded-md border border-border text-inksoft hover:text-accent hover:border-accent">
-                                → {s.label}
-                              </button>
-                            ))}
-                          </div>
-
-                          <input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} placeholder="Nome"
-                            className="w-full px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink" />
-                          <input value={editForm.contact} onChange={(e) => setEditForm({ ...editForm, contact: e.target.value })} placeholder="Contato"
-                            className="w-full px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink" />
-                          <div className="grid grid-cols-2 gap-1.5">
-                            <input type="number" step="0.01" value={editForm.sessionValue} onChange={(e) => setEditForm({ ...editForm, sessionValue: e.target.value })} placeholder="Valor sessão"
-                              className="px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink mono" />
-                            <input type="number" min="1" max="31" value={editForm.paymentDueDay} onChange={(e) => setEditForm({ ...editForm, paymentDueDay: e.target.value })} placeholder="Dia vencimento"
-                              className="px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink mono" />
-                          </div>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            <input type="datetime-local" value={editForm.nextSessionAt} onChange={(e) => setEditForm({ ...editForm, nextSessionAt: e.target.value })}
-                              className="px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink mono" />
-                            <select value={editForm.paymentStatus} onChange={(e) => setEditForm({ ...editForm, paymentStatus: e.target.value })}
-                              className="px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink">
-                              {Object.entries(PAYMENT_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                            </select>
-                          </div>
-                          <textarea value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} placeholder="Observações gerais" rows={2}
-                            className="w-full px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink resize-y" />
-
-                          <div>
-                            <label className="block text-[10.5px] text-inkfaint mb-1">Dias de atendimento / horário</label>
-                            <div className="flex flex-wrap items-center gap-1">
-                              {WEEKDAYS.map((d) => (
-                                <button type="button" key={d.key} onClick={() => setEditForm({ ...editForm, weekdays: toggleDay(editForm.weekdays, d.key) })}
-                                  className={`text-[10px] px-1.5 py-1 rounded-md border font-medium ${editForm.weekdays.includes(d.key) ? "bg-accent border-accent text-white" : "border-border text-inksoft hover:border-accent"}`}>
-                                  {d.label}
-                                </button>
-                              ))}
-                              <input type="time" value={editForm.sessionTime} onChange={(e) => setEditForm({ ...editForm, sessionTime: e.target.value })}
-                                className="px-1.5 py-1 text-[11px] rounded-md border border-border bg-surface2 text-ink mono w-[88px]" />
-                            </div>
-                          </div>
-
-                          <div className="border-t border-border pt-2">
-                            <label className="block text-[10.5px] text-inkfaint mb-1">Pacote de sessões contratadas</label>
-                            <div className="grid grid-cols-2 gap-1.5">
-                              <input type="number" min="1" value={editForm.packageTotalSessions}
-                                onChange={(e) => setEditForm({ ...editForm, packageTotalSessions: e.target.value })} placeholder="Qtd. sessões"
-                                className="px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink mono" />
-                              <input type="date" value={editForm.packageStartDate}
-                                onChange={(e) => setEditForm({ ...editForm, packageStartDate: e.target.value })}
-                                className="px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink mono" />
-                            </div>
-                            <div className="flex items-center gap-1.5 mt-1.5">
-                              <span className="text-[10.5px] text-inkfaint">Horário das sessões:</span>
-                              <input type="time" value={editForm.sessionTime} onChange={(e) => setEditForm({ ...editForm, sessionTime: e.target.value })}
-                                className="px-1.5 py-1 text-[11px] rounded-md border border-border bg-surface2 text-ink mono w-[88px]" />
-                              <span className="text-[10px] text-inkfaint">(mesmo horário usado nos dias de atendimento acima)</span>
-                            </div>
-                            <div className="text-[10px] text-inkfaint mt-1">
-                              {editForm.weekdays.length > 0
-                                ? `${editForm.weekdays.length}x por semana (baseado nos dias marcados acima) — as datas são calculadas automaticamente a partir da data de início. Lembre de clicar em Salvar pra confirmar.`
-                                : "Marque pelo menos um dia de atendimento acima pra calcular as datas."}
-                            </div>
-                            {(() => {
-                              // Computed live from the edit form (not from the server's p.sessionSchedule)
-                              // so the preview reacts instantly to horário/dias/data/quantidade changes,
-                              // even before Salvar is clicked.
-                              const liveSchedule = computeScheduleClientSide(editForm);
-                              return liveSchedule && (
-                                <div className="mt-2 bg-surface2 border border-border rounded-md px-2 py-1.5 space-y-1">
-                                  <div className="flex items-center justify-between text-[10.5px]">
-                                    <span className="text-inksoft font-medium">{liveSchedule.completed}/{liveSchedule.total} sessões realizadas</span>
-                                  </div>
-                                  <div className="max-h-24 overflow-y-auto space-y-0.5">
-                                    {liveSchedule.dates.map((d, i) => (
-                                      <div key={d} className={`flex items-center justify-between text-[10px] ${new Date(d) < new Date() ? "text-inkfaint line-through" : "text-ink"}`}>
-                                        <span>Sessão {i + 1}</span>
-                                        <span className="mono">{fmtScheduleWeekday(d)}, {fmtScheduleDateTime(d)}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              );
-                            })()}
-                          </div>
-
-                          <div className="border-t border-border pt-2">
-                            <label className="block text-[10.5px] text-inkfaint mb-1">Sessão por vídeo (Google Meet)</label>
-                            {p.meetLink && !editingMeetLink ? (
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <a href={p.meetLink} target="_blank" rel="noopener noreferrer"
-                                  className="text-[11px] bg-accent text-white font-medium px-2.5 py-1 rounded-md hover:bg-accentink">
-                                  Iniciar sessão
-                                </a>
-                                <button type="button" onClick={() => setEditingMeetLink(true)} className="text-[10.5px] text-inksoft hover:text-accent">
-                                  Trocar link
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="space-y-1.5">
-                                <div className="flex gap-1.5">
-                                  <input value={editForm.meetLink} onChange={(e) => setEditForm({ ...editForm, meetLink: e.target.value })} placeholder="Cole aqui o link gerado no Meet"
-                                    className="flex-1 min-w-0 px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink" />
-                                  <button type="button" onClick={generateMeetLink} className="text-[10.5px] shrink-0 border border-border rounded-md px-2 py-1 text-inksoft hover:border-accent hover:text-accent">
-                                    Gerar no Meet
-                                  </button>
-                                </div>
-                                <div className="text-[10px] text-inkfaint">Clique em "Gerar no Meet" pra abrir uma sala nova, copie o link e cole aqui — depois é só salvar.</div>
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="flex items-center justify-between gap-2">
-                            <button onClick={() => saveEdit(p)} className="text-[11px] bg-accent text-white font-medium px-2.5 py-1 rounded-md hover:bg-accentink">
-                              Salvar
-                            </button>
-                            <div className="flex items-center gap-3">
-                              <button onClick={() => printReport(p)} className="text-[11px] text-inksoft hover:text-accent">Imprimir relatório</button>
-                              <button onClick={() => removePatient(p)} className="text-[11px] text-danger hover:underline">Remover paciente</button>
-                            </div>
-                          </div>
-
-                          <div className="border-t border-border pt-2 space-y-1.5">
-                            <div className="text-[10.5px] font-semibold uppercase tracking-wide text-inkfaint">Relatórios / sessões</div>
-                            <div className="space-y-1.5 max-h-32 overflow-y-auto">
-                              {(notesById[p.id] || []).map((n) => (
-                                <div key={n.id} className="text-[11px] bg-surface2 border border-border rounded-md px-2 py-1.5">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <div className="text-[10px] text-inkfaint mono">{fmtDateTime(n.createdAt)}</div>
-                                    <label className="flex items-center gap-1 text-[10px] text-inkfaint cursor-pointer shrink-0">
-                                      <input type="checkbox" checked={!!n.visibleToPatient} onChange={() => toggleNoteVisibility(p, n)} className="accent-accent w-3 h-3" />
-                                      visível pro paciente
-                                    </label>
-                                  </div>
-                                  <div className="text-ink whitespace-pre-wrap mt-0.5">{n.content}</div>
-                                </div>
-                              ))}
-                              {(notesById[p.id] || []).length === 0 && <div className="text-[10.5px] text-inkfaint">Nenhum relatório ainda.</div>}
-                            </div>
-                            <div className="flex gap-1.5">
-                              <input value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)} placeholder="Nova anotação de sessão…"
-                                className="flex-1 px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink" />
-                              <button onClick={() => addNote(p)} disabled={savingNote}
-                                className="text-[11px] bg-accent text-white font-medium px-2.5 rounded-md hover:bg-accentink disabled:opacity-60">
-                                {savingNote ? "…" : "Add"}
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="border-t border-border pt-2 space-y-1.5">
-                            <div className="text-[10.5px] font-semibold uppercase tracking-wide text-inkfaint">Atividades</div>
-                            <div className="space-y-1 max-h-28 overflow-y-auto">
-                              {(activitiesById[p.id] || []).map((a) => (
-                                <div key={a.id} className="flex items-center gap-1.5 text-[11px] bg-surface2 border border-border rounded-md px-2 py-1">
-                                  <input type="checkbox" checked={a.status === "concluida"} onChange={() => toggleActivity(p, a)} className="accent-accent w-3 h-3 shrink-0" />
-                                  <span className={`flex-1 min-w-0 truncate ${a.status === "concluida" ? "line-through text-inkfaint" : "text-ink"}`}>{a.title}</span>
-                                  {a.dueDate && <span className="text-[10px] text-inkfaint mono shrink-0">{fmtDate(a.dueDate)}</span>}
-                                  <button onClick={() => deleteActivity(p, a.id)} className="text-inkfaint hover:text-danger shrink-0 leading-none">×</button>
-                                </div>
-                              ))}
-                              {(activitiesById[p.id] || []).length === 0 && <div className="text-[10.5px] text-inkfaint">Nenhuma atividade ainda.</div>}
-                            </div>
-                            <div className="flex gap-1.5">
-                              <input value={activityDraft.title} onChange={(e) => setActivityDraft({ ...activityDraft, title: e.target.value })} placeholder="Nova atividade…"
-                                className="flex-1 px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink" />
-                              <input type="date" value={activityDraft.dueDate} onChange={(e) => setActivityDraft({ ...activityDraft, dueDate: e.target.value })}
-                                className="w-28 px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink mono" />
-                              <button onClick={() => addActivity(p)} disabled={savingActivity}
-                                className="text-[11px] bg-accent text-white font-medium px-2.5 rounded-md hover:bg-accentink disabled:opacity-60">
-                                {savingActivity ? "…" : "Add"}
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="border-t border-border pt-2 space-y-1 text-[10.5px]">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-inkfaint">Acesso ao portal:</span>
-                              {p.portalUser ? (
-                                <span className={`px-1.5 py-0.5 rounded-full font-medium ${p.portalUser.active ? "bg-successsoft text-success" : "bg-dangersoft text-danger"}`}>
-                                  {p.portalUser.active ? "login ativo" : "login desativado"}
-                                </span>
-                              ) : (
-                                <span className="text-inkfaint">sem login ainda</span>
-                              )}
-                            </div>
-                            <div className="text-inkfaint">Crie e gerencie o login na aba <strong className="text-inksoft font-medium">Acessos dos pacientes</strong>.</div>
-                          </div>
-                        </div>
-                      )}
                     </div>
                   );
                 })}
@@ -733,6 +528,244 @@ export default function PatientsBoard() {
         })}
       </div>
       )}
+
+      {/* Painel de edição do paciente — modal amplo (não mais espremido dentro
+          da coluna do Kanban), tela cheia no mobile, com seções espaçadas e
+          controles maiores para ficar confortável de usar em qualquer tamanho
+          de tela. */}
+      {expandedId && editForm && (() => {
+        const p = patients.find((x) => x.id === expandedId);
+        if (!p) return null;
+        const liveSchedule = computeScheduleClientSide(editForm);
+        return (
+          <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center">
+            <div onClick={() => setExpandedId(null)} className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+            <div className="relative w-full sm:max-w-2xl h-[92vh] sm:h-auto sm:max-h-[88vh] bg-surface border border-border sm:rounded-3xl rounded-t-3xl shadow-2xl flex flex-col overflow-hidden">
+              <div className="shrink-0 flex items-center justify-between gap-3 px-5 sm:px-7 py-4 sm:py-5 border-b border-border bg-surface">
+                <div className="min-w-0">
+                  <div className="text-[11px] uppercase tracking-wider text-inkfaint">Paciente</div>
+                  <h3 className="font-display font-semibold text-xl text-ink truncate">{p.name}</h3>
+                </div>
+                <button onClick={() => setExpandedId(null)} aria-label="Fechar"
+                  className="shrink-0 w-10 h-10 flex items-center justify-center rounded-xl text-inksoft hover:text-ink hover:bg-white/5 transition">
+                  <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4 4l10 10M14 4L4 14" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg>
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-5 sm:px-7 py-5 sm:py-6 space-y-5">
+                {p.requestedSessionAt && (
+                  <div className="bg-warningsoft border border-warning/30 rounded-2xl px-4 py-3.5 space-y-2">
+                    <div className="text-[12.5px] font-semibold text-warning">Pedido de remarcação do paciente</div>
+                    <div className="text-sm text-ink">Novo horário sugerido: <span className="mono font-medium">{fmtDateTime(p.requestedSessionAt)}</span></div>
+                    {p.requestNote && <div className="text-[12.5px] text-inksoft">"{p.requestNote}"</div>}
+                    <div className="flex gap-4 pt-0.5">
+                      <button onClick={() => respondRequest(p, true)} className="text-[12.5px] text-success font-semibold hover:underline">Aprovar</button>
+                      <button onClick={() => respondRequest(p, false)} className="text-[12.5px] text-danger hover:underline">Recusar</button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-1.5">
+                  {STAGES.filter((s) => s.key !== p.status).map((s) => (
+                    <button key={s.key} onClick={() => moveStage(p, s.key)}
+                      className="text-xs px-3 py-1.5 rounded-full border border-border text-inksoft hover:text-accent hover:border-accent transition">
+                      → {s.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="bg-surface2/60 border border-border/70 rounded-2xl p-4 sm:p-5 space-y-3.5">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-inkfaint">Dados do paciente</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} placeholder="Nome"
+                      className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-border bg-surface2 text-ink focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition" />
+                    <input value={editForm.contact} onChange={(e) => setEditForm({ ...editForm, contact: e.target.value })} placeholder="Contato"
+                      className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-border bg-surface2 text-ink focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition" />
+                    <input type="number" step="0.01" value={editForm.sessionValue} onChange={(e) => setEditForm({ ...editForm, sessionValue: e.target.value })} placeholder="Valor sessão"
+                      className="px-3.5 py-2.5 text-sm rounded-xl border border-border bg-surface2 text-ink mono focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition" />
+                    <input type="number" min="1" max="31" value={editForm.paymentDueDay} onChange={(e) => setEditForm({ ...editForm, paymentDueDay: e.target.value })} placeholder="Dia vencimento"
+                      className="px-3.5 py-2.5 text-sm rounded-xl border border-border bg-surface2 text-ink mono focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition" />
+                    <input type="datetime-local" value={editForm.nextSessionAt} onChange={(e) => setEditForm({ ...editForm, nextSessionAt: e.target.value })}
+                      className="px-3.5 py-2.5 text-sm rounded-xl border border-border bg-surface2 text-ink mono focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition" />
+                    <select value={editForm.paymentStatus} onChange={(e) => setEditForm({ ...editForm, paymentStatus: e.target.value })}
+                      className="px-3.5 py-2.5 text-sm rounded-xl border border-border bg-surface2 text-ink focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition">
+                      {Object.entries(PAYMENT_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+                  </div>
+                  <textarea value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} placeholder="Observações gerais" rows={2}
+                    className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-border bg-surface2 text-ink resize-y focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition" />
+                </div>
+
+                <div className="bg-surface2/60 border border-border/70 rounded-2xl p-4 sm:p-5 space-y-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-inkfaint">Dias de atendimento</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {WEEKDAYS.map((d) => (
+                      <button type="button" key={d.key} onClick={() => setEditForm({ ...editForm, weekdays: toggleDay(editForm.weekdays, d.key) })}
+                        className={`text-[13px] px-3.5 py-2 rounded-xl border font-medium transition ${editForm.weekdays.includes(d.key) ? "bg-accent border-accent text-white shadow-[0_4px_14px_-4px_rgba(255,122,26,0.55)]" : "border-border text-inksoft hover:border-accent hover:text-ink"}`}>
+                        {d.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-inkfaint mb-1.5">Horário padrão</label>
+                    <input type="time" value={editForm.sessionTime} onChange={(e) => setEditForm({ ...editForm, sessionTime: e.target.value })}
+                      className="px-4 py-3 text-lg font-display font-semibold rounded-xl border border-border bg-surface2 text-ink mono focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition w-full sm:w-auto" />
+                  </div>
+                </div>
+
+                <div className="bg-surface2/60 border border-border/70 rounded-2xl p-4 sm:p-5 space-y-3.5">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-inkfaint">Pacote de sessões contratadas</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] text-inkfaint mb-1.5">Quantidade de sessões</label>
+                      <input type="number" min="1" value={editForm.packageTotalSessions}
+                        onChange={(e) => setEditForm({ ...editForm, packageTotalSessions: e.target.value })} placeholder="Ex: 4"
+                        className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-border bg-surface2 text-ink mono focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition" />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-inkfaint mb-1.5">Início do pacote</label>
+                      <input type="date" value={editForm.packageStartDate}
+                        onChange={(e) => setEditForm({ ...editForm, packageStartDate: e.target.value })}
+                        className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-border bg-surface2 text-ink mono focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-inkfaint mb-1.5">Horário das sessões</label>
+                    <input type="time" value={editForm.sessionTime} onChange={(e) => setEditForm({ ...editForm, sessionTime: e.target.value })}
+                      className="px-4 py-3 text-lg font-display font-semibold rounded-xl border border-border bg-surface2 text-ink mono focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition w-full sm:w-auto" />
+                    <div className="text-[11.5px] text-inkfaint mt-1.5">Mesmo horário dos dias de atendimento acima.</div>
+                  </div>
+                  <div className="text-[12px] text-inkfaint leading-relaxed">
+                    {editForm.weekdays.length > 0
+                      ? `${editForm.weekdays.length}x por semana (baseado nos dias marcados acima) — as datas são calculadas automaticamente a partir da data de início. Lembre de clicar em Salvar pra confirmar.`
+                      : "Marque pelo menos um dia de atendimento acima pra calcular as datas."}
+                  </div>
+                  {liveSchedule && (
+                    <div className="bg-surface border border-border rounded-xl px-4 py-3.5 space-y-2.5">
+                      <div className="flex items-center justify-between text-[12.5px]">
+                        <span className="text-inksoft font-semibold">{liveSchedule.completed}/{liveSchedule.total} sessões realizadas</span>
+                      </div>
+                      <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+                        {liveSchedule.dates.map((d, i) => (
+                          <div key={d} className={`flex items-center justify-between gap-3 text-[12.5px] px-3 py-2 rounded-lg ${new Date(d) < new Date() ? "text-inkfaint line-through bg-transparent" : "text-ink bg-surface2/70"}`}>
+                            <span className="font-medium">Sessão {i + 1}</span>
+                            <span className="mono flex items-center gap-2">
+                              <span className="text-[10.5px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-accentsoft text-accent font-semibold">{fmtScheduleWeekday(d)}</span>
+                              {fmtScheduleDateTime(d)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-surface2/60 border border-border/70 rounded-2xl p-4 sm:p-5 space-y-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-inkfaint">Sessão por vídeo (Google Meet)</div>
+                  {p.meetLink && !editingMeetLink ? (
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <a href={p.meetLink} target="_blank" rel="noopener noreferrer"
+                        className="text-sm bg-accent text-white font-semibold px-4 py-2.5 rounded-xl hover:bg-accentink transition shadow-[0_6px_18px_-6px_rgba(255,122,26,0.55)]">
+                        Iniciar sessão
+                      </a>
+                      <button type="button" onClick={() => setEditingMeetLink(true)} className="text-[12.5px] text-inksoft hover:text-accent transition">
+                        Trocar link
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input value={editForm.meetLink} onChange={(e) => setEditForm({ ...editForm, meetLink: e.target.value })} placeholder="Cole aqui o link gerado no Meet"
+                          className="flex-1 min-w-0 px-3.5 py-2.5 text-sm rounded-xl border border-border bg-surface2 text-ink focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition" />
+                        <button type="button" onClick={generateMeetLink} className="text-[13px] shrink-0 border border-border rounded-xl px-4 py-2.5 text-inksoft hover:border-accent hover:text-accent transition font-medium">
+                          Gerar no Meet
+                        </button>
+                      </div>
+                      <div className="text-[11.5px] text-inkfaint">Clique em "Gerar no Meet" pra abrir uma sala nova, copie o link e cole aqui — depois é só salvar.</div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-surface2/60 border border-border/70 rounded-2xl p-4 sm:p-5 space-y-2.5">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-inkfaint">Relatórios / sessões</div>
+                  <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                    {(notesById[p.id] || []).map((n) => (
+                      <div key={n.id} className="text-[13px] bg-surface border border-border rounded-xl px-3.5 py-2.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-[11px] text-inkfaint mono">{fmtDateTime(n.createdAt)}</div>
+                          <label className="flex items-center gap-1.5 text-[11px] text-inkfaint cursor-pointer shrink-0">
+                            <input type="checkbox" checked={!!n.visibleToPatient} onChange={() => toggleNoteVisibility(p, n)} className="accent-accent w-3.5 h-3.5" />
+                            visível pro paciente
+                          </label>
+                        </div>
+                        <div className="text-ink whitespace-pre-wrap mt-1">{n.content}</div>
+                      </div>
+                    ))}
+                    {(notesById[p.id] || []).length === 0 && <div className="text-[12.5px] text-inkfaint">Nenhum relatório ainda.</div>}
+                  </div>
+                  <div className="flex gap-2">
+                    <input value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)} placeholder="Nova anotação de sessão…"
+                      className="flex-1 px-3.5 py-2.5 text-sm rounded-xl border border-border bg-surface2 text-ink focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition" />
+                    <button onClick={() => addNote(p)} disabled={savingNote}
+                      className="text-sm bg-accent text-white font-semibold px-4 rounded-xl hover:bg-accentink disabled:opacity-60 transition">
+                      {savingNote ? "…" : "Add"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-surface2/60 border border-border/70 rounded-2xl p-4 sm:p-5 space-y-2.5">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-inkfaint">Atividades</div>
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                    {(activitiesById[p.id] || []).map((a) => (
+                      <div key={a.id} className="flex items-center gap-2 text-[13px] bg-surface border border-border rounded-xl px-3.5 py-2">
+                        <input type="checkbox" checked={a.status === "concluida"} onChange={() => toggleActivity(p, a)} className="accent-accent w-3.5 h-3.5 shrink-0" />
+                        <span className={`flex-1 min-w-0 truncate ${a.status === "concluida" ? "line-through text-inkfaint" : "text-ink"}`}>{a.title}</span>
+                        {a.dueDate && <span className="text-[11px] text-inkfaint mono shrink-0">{fmtDate(a.dueDate)}</span>}
+                        <button onClick={() => deleteActivity(p, a.id)} className="text-inkfaint hover:text-danger shrink-0 leading-none text-base px-1">×</button>
+                      </div>
+                    ))}
+                    {(activitiesById[p.id] || []).length === 0 && <div className="text-[12.5px] text-inkfaint">Nenhuma atividade ainda.</div>}
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input value={activityDraft.title} onChange={(e) => setActivityDraft({ ...activityDraft, title: e.target.value })} placeholder="Nova atividade…"
+                      className="flex-1 px-3.5 py-2.5 text-sm rounded-xl border border-border bg-surface2 text-ink focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition" />
+                    <div className="flex gap-2">
+                      <input type="date" value={activityDraft.dueDate} onChange={(e) => setActivityDraft({ ...activityDraft, dueDate: e.target.value })}
+                        className="w-full sm:w-32 px-3.5 py-2.5 text-sm rounded-xl border border-border bg-surface2 text-ink mono focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition" />
+                      <button onClick={() => addActivity(p)} disabled={savingActivity}
+                        className="text-sm bg-accent text-white font-semibold px-4 rounded-xl hover:bg-accentink disabled:opacity-60 transition shrink-0">
+                        {savingActivity ? "…" : "Add"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap text-[12.5px] px-1">
+                  <span className="text-inkfaint">Acesso ao portal:</span>
+                  {p.portalUser ? (
+                    <span className={`px-2 py-0.5 rounded-full font-medium ${p.portalUser.active ? "bg-successsoft text-success" : "bg-dangersoft text-danger"}`}>
+                      {p.portalUser.active ? "login ativo" : "login desativado"}
+                    </span>
+                  ) : (
+                    <span className="text-inkfaint">sem login ainda</span>
+                  )}
+                  <span className="text-inkfaint">— gerencie na aba <strong className="text-inksoft font-medium">Acessos dos pacientes</strong>.</span>
+                </div>
+              </div>
+
+              <div className="shrink-0 flex items-center justify-between gap-3 px-5 sm:px-7 py-4 border-t border-border bg-surface">
+                <button onClick={() => saveEdit(p)} className="bg-accent text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-accentink transition shadow-[0_6px_20px_-6px_rgba(255,122,26,0.5)]">
+                  Salvar alterações
+                </button>
+                <div className="flex items-center gap-4">
+                  <button onClick={() => printReport(p)} className="text-[13px] text-inksoft hover:text-accent transition">Imprimir relatório</button>
+                  <button onClick={() => removePatient(p)} className="text-[13px] text-danger hover:underline">Remover</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {view === "agenda" && (
         <div className="space-y-2">

@@ -50,7 +50,7 @@ export default function Dashboard() {
   const [error, setError] = useState("");
 
   const [newClient, setNewClient] = useState({ name: "", niche: "", plan: "", monthlyValue: "", gestorId: "", optimizationDay: "" });
-  const [newTask, setNewTask] = useState({ title: "", clientId: "", priority: "MEDIA", dueDate: "" });
+  const [newTask, setNewTask] = useState({ title: "", clientId: "", gestorId: "", priority: "MEDIA", dueDate: "" });
 
   useEffect(() => {
     const u = getUser();
@@ -121,7 +121,7 @@ export default function Dashboard() {
     e.preventDefault();
     try {
       await api("/api/tasks", { method: "POST", body: newTask });
-      setNewTask({ title: "", clientId: "", priority: "MEDIA", dueDate: "" });
+      setNewTask({ title: "", clientId: "", gestorId: "", priority: "MEDIA", dueDate: "" });
       loadAll();
     } catch (err) {
       alert(err.message);
@@ -368,6 +368,16 @@ export default function Dashboard() {
                   {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
+              {user.role === "SOCIO" && (
+                <div>
+                  <label className="block text-[11px] text-inkfaint mb-1">Gestor</label>
+                  <select value={newTask.gestorId} onChange={(e) => setNewTask({ ...newTask, gestorId: e.target.value })}
+                    className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink">
+                    <option value="">Sem gestor</option>
+                    {gestores.map((g) => <option key={g.id} value={g.id}>{g.name}{g.id === user.id ? " (você)" : ""}</option>)}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="block text-[11px] text-inkfaint mb-1">Prioridade</label>
                 <select value={newTask.priority} onChange={(e) => setNewTask({ ...newTask, priority: e.target.value })}
@@ -385,25 +395,72 @@ export default function Dashboard() {
               <button className="bg-accent text-white text-sm font-medium py-1.5 rounded-md hover:bg-accentink transition">Adicionar</button>
             </form>
 
-            <div className="bg-surface border border-border rounded-xl shadow-sm divide-y divide-border">
-              {tasks.map((t) => {
-                const overdue = isOverdue(t.dueDate, t.status);
-                return (
-                  <label key={t.id} className="flex items-center gap-3 px-4.5 py-3 cursor-pointer">
-                    <input type="checkbox" checked={t.status === "CONCLUIDA"} onChange={() => toggleTaskStatus(t)} className="accent-accent w-4 h-4 shrink-0" />
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${t.priority === "ALTA" ? "bg-danger" : t.priority === "MEDIA" ? "bg-warning" : "bg-inkfaint"}`} />
-                    <div className="flex-1 min-w-0">
-                      <div className={`text-sm font-medium truncate ${t.status === "CONCLUIDA" ? "line-through text-inkfaint" : "text-ink"}`}>{t.title}</div>
-                      <div className="text-xs text-inkfaint truncate">{t.client?.name}{t.gestor ? ` · ${t.gestor.name}` : ""}</div>
+            {user.role === "SOCIO" ? (
+              // Sócio vê tudo, separado por coluna — uma coluna por gestor (e uma
+              // extra pra tarefas ainda sem gestor definido), pra bater o olho e
+              // ver rápido quem está com o quê.
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                {[...gestores, { id: "__sem_gestor__", name: "Sem gestor" }].map((g) => {
+                  const laneTasks = tasks.filter((t) => (g.id === "__sem_gestor__" ? !t.gestorId : t.gestorId === g.id));
+                  if (g.id === "__sem_gestor__" && laneTasks.length === 0) return null;
+                  return (
+                    <div key={g.id} className="bg-surface border border-border rounded-xl shadow-sm overflow-hidden flex flex-col">
+                      <div className="px-3.5 py-2.5 border-b border-border font-display font-semibold text-xs text-ink flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          {g.id !== "__sem_gestor__" && (
+                            <span className="w-5 h-5 rounded-full bg-accentsoft text-accent text-[10px] font-bold flex items-center justify-center shrink-0">{initials(g.name)}</span>
+                          )}
+                          <span className="truncate">{g.name}{g.id === user.id ? " (você)" : ""}</span>
+                        </span>
+                        <span className="text-[10.5px] text-inkfaint mono shrink-0">{laneTasks.length}</span>
+                      </div>
+                      <div className="divide-y divide-border flex-1 min-h-[60px]">
+                        {laneTasks.map((t) => {
+                          const overdue = isOverdue(t.dueDate, t.status);
+                          return (
+                            <label key={t.id} className="flex items-start gap-2 px-3 py-2.5 cursor-pointer hover:bg-white/[0.03] transition">
+                              <input type="checkbox" checked={t.status === "CONCLUIDA"} onChange={() => toggleTaskStatus(t)} className="accent-accent w-3.5 h-3.5 shrink-0 mt-1" />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${t.priority === "ALTA" ? "bg-danger" : t.priority === "MEDIA" ? "bg-warning" : "bg-inkfaint"}`} />
+                                  <span className={`text-[13px] font-medium truncate ${t.status === "CONCLUIDA" ? "line-through text-inkfaint" : "text-ink"}`}>{t.title}</span>
+                                </div>
+                                <div className="text-[10.5px] text-inkfaint truncate mt-0.5">{t.client?.name}</div>
+                                <div className={`text-[10.5px] mono mt-0.5 ${overdue ? "text-danger font-semibold" : "text-inksoft"}`}>
+                                  {overdue ? "atrasada · " : ""}{fmtDate(t.dueDate)}
+                                </div>
+                              </div>
+                            </label>
+                          );
+                        })}
+                        {laneTasks.length === 0 && <div className="px-3 py-6 text-center text-inkfaint text-[11px]">Nenhuma tarefa.</div>}
+                      </div>
                     </div>
-                    <div className={`text-xs mono shrink-0 ${overdue ? "text-danger font-semibold" : "text-inksoft"}`}>
-                      {overdue ? "atrasada · " : ""}{fmtDate(t.dueDate)}
-                    </div>
-                  </label>
-                );
-              })}
-              {!loading && tasks.length === 0 && <div className="px-4.5 py-8 text-center text-inkfaint">Nenhuma tarefa por aqui.</div>}
-            </div>
+                  );
+                })}
+              </div>
+            ) : (
+              // Gestor: a API já devolve só as tarefas dele, então uma lista simples basta.
+              <div className="bg-surface border border-border rounded-xl shadow-sm divide-y divide-border">
+                {tasks.map((t) => {
+                  const overdue = isOverdue(t.dueDate, t.status);
+                  return (
+                    <label key={t.id} className="flex items-center gap-3 px-4.5 py-3 cursor-pointer">
+                      <input type="checkbox" checked={t.status === "CONCLUIDA"} onChange={() => toggleTaskStatus(t)} className="accent-accent w-4 h-4 shrink-0" />
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${t.priority === "ALTA" ? "bg-danger" : t.priority === "MEDIA" ? "bg-warning" : "bg-inkfaint"}`} />
+                      <div className="flex-1 min-w-0">
+                        <div className={`text-sm font-medium truncate ${t.status === "CONCLUIDA" ? "line-through text-inkfaint" : "text-ink"}`}>{t.title}</div>
+                        <div className="text-xs text-inkfaint truncate">{t.client?.name}</div>
+                      </div>
+                      <div className={`text-xs mono shrink-0 ${overdue ? "text-danger font-semibold" : "text-inksoft"}`}>
+                        {overdue ? "atrasada · " : ""}{fmtDate(t.dueDate)}
+                      </div>
+                    </label>
+                  );
+                })}
+                {!loading && tasks.length === 0 && <div className="px-4.5 py-8 text-center text-inkfaint">Nenhuma tarefa por aqui.</div>}
+              </div>
+            )}
           </section>
         )}
 

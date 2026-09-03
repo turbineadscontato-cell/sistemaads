@@ -8,10 +8,13 @@ router.use(requireAuth);
 
 // Everyone logged in can see the list of gestores (needed to assign clients/tasks),
 // but only a sócio can see full user management or create/deactivate accounts.
+// Includes SOCIO accounts too (not just GESTOR): in practice the sócio (Elismael)
+// also works client accounts directly as a traffic manager, so he needs to show
+// up as an assignable "gestor" option on clients and tasks, same as any gestor.
 router.get("/gestores", async (req, res) => {
   const gestores = await prisma.user.findMany({
-    where: { role: "GESTOR", active: true },
-    select: { id: true, name: true, email: true },
+    where: { role: { in: ["GESTOR", "SOCIO"] }, active: true },
+    select: { id: true, name: true, email: true, role: true },
     orderBy: { name: "asc" },
   });
   res.json(gestores);

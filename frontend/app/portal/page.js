@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, getUser, clearSession } from "../../lib/api";
 import { LOGO_SIDEBAR_SRC } from "../../lib/logo";
+import PortalShell from "../../components/PortalShell";
 import ClientFiles from "../../components/ClientFiles";
 import ClientReports from "../../components/ClientReports";
 import ClientLeadsBoard from "../../components/ClientLeadsBoard";
@@ -124,27 +125,14 @@ export default function ClientPortal() {
   const visibleTabs = TABS.filter((t) => !t.traffic || !isSoSistema);
 
   return (
-    <div className="min-h-screen bg-bg">
-      <div className="sticky top-0 z-10 bg-sidebar border-b border-border">
-        <div className="flex items-center justify-between px-4 sm:px-6 py-3">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={LOGO_SIDEBAR_SRC} alt="TurbinaADS" className="h-7 w-auto" />
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-[#d9cfc2] hidden sm:inline">{user.name}</span>
-            <button onClick={logout} className="text-xs text-[#8a8175] hover:text-accent underline">Sair</button>
-          </div>
-        </div>
-        <nav className="flex gap-1 px-4 sm:px-6 pb-2 overflow-x-auto">
-          {visibleTabs.map((t) => (
-            <button key={t.key} onClick={() => setTab(t.key)}
-              className={`shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition ${tab === t.key ? "bg-accent text-white" : "text-[#a89f92] hover:text-white hover:bg-white/5"}`}>
-              {t.label}
-            </button>
-          ))}
-        </nav>
-      </div>
-
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+    <PortalShell
+      brand={<img src={LOGO_SIDEBAR_SRC} alt="TurbinaADS" className="h-7 w-auto" />}
+      tabs={visibleTabs}
+      activeTab={tab}
+      onTabChange={setTab}
+      userName={user.name}
+      onLogout={logout}
+    >
         {tab === "geral" && (
           <>
             <div>
@@ -249,7 +237,6 @@ export default function ClientPortal() {
         {tab === "arquivos" && <ClientFiles clientId={client.id} canManage={false} allowClientUpload showScriptGenerator={false} />}
         {tab === "relatorios" && !isSoSistema && <ClientReports clientId={client.id} canManage={false} />}
         {tab === "marca" && <BrandingSettings client={client} onChange={load} />}
-      </div>
-    </div>
+    </PortalShell>
   );
 }

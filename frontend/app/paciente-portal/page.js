@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, getUser, clearSession } from "../../lib/api";
+import PortalShell from "../../components/PortalShell";
 
 const WEEKDAYS = [
   { key: 0, label: "Domingo" },
@@ -186,32 +187,22 @@ export default function PatientPortal() {
   const attendanceDays = (patient.weekdays || []).map((d) => WEEKDAYS.find((w) => w.key === d)?.label).filter(Boolean);
 
   return (
-    <div className="min-h-screen bg-bg">
-      <div className="sticky top-0 z-10 bg-sidebar border-b border-border">
-        <div className="flex items-center justify-between px-4 sm:px-6 py-3">
-          <div className="flex items-center gap-2.5 min-w-0">
-            {logo ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={logo} alt={brandLabel} className="h-8 w-8 rounded-md object-contain bg-white/5" />
-            ) : null}
-            <span className="font-display font-semibold text-white text-sm truncate">{brandLabel}</span>
-          </div>
-          <div className="flex items-center gap-3 shrink-0">
-            <span className="text-xs text-[#d9cfc2] hidden sm:inline">{user.name}</span>
-            <button onClick={logout} className="text-xs text-[#8a8175] hover:text-accent underline">Sair</button>
-          </div>
+    <PortalShell
+      brand={
+        <div className="flex items-center gap-2.5 min-w-0">
+          {logo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={logo} alt={brandLabel} className="h-8 w-8 rounded-lg object-contain bg-white/5 shrink-0" />
+          ) : null}
+          <span className="font-display font-semibold text-white text-[13.5px] truncate">{brandLabel}</span>
         </div>
-        <nav className="flex gap-1 px-4 sm:px-6 pb-2 overflow-x-auto">
-          {TABS.map((t) => (
-            <button key={t.key} onClick={() => setTab(t.key)}
-              className={`shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition ${tab === t.key ? "bg-accent text-white" : "text-[#a89f92] hover:text-white hover:bg-white/5"}`}>
-              {t.label}
-            </button>
-          ))}
-        </nav>
-      </div>
-
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+      }
+      tabs={TABS}
+      activeTab={tab}
+      onTabChange={setTab}
+      userName={user.name}
+      onLogout={logout}
+    >
         {tab === "inicio" && (
           <div className="space-y-4">
             <div>
@@ -396,7 +387,6 @@ export default function PatientPortal() {
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </PortalShell>
   );
 }
