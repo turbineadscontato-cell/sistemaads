@@ -20,8 +20,13 @@ router.get("/", async (req, res) => {
   const patients = await prisma.patient.findMany({
     where: { clientId },
     orderBy: { createdAt: "desc" },
+    include: { portalUser: { select: { id: true, email: true, active: true, createdAt: true } } },
   });
-  res.json(patients);
+  // A patient can have at most one portal login (enforced on create) — flatten
+  // the array relation into a single `portalUser` field so the frontend
+  // (Kanban board + the dedicated "Acessos" tab) doesn't need a second request
+  // per patient just to know whether a login exists.
+  res.json(patients.map(({ portalUser, ...p }) => ({ ...p, portalUser: portalUser[0] || null })));
 });
 
 router.post("/", async (req, res) => {
