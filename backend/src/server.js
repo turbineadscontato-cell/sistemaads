@@ -17,6 +17,7 @@ const clientLeadRoutes = require("./routes/clientLeads");
 const aiRoutes = require("./routes/ai");
 const patientRoutes = require("./routes/patients");
 const contentPostRoutes = require("./routes/contentPosts");
+const metaRoutes = require("./routes/meta");
 
 const app = express();
 
@@ -51,6 +52,7 @@ app.use("/api/client-leads", clientLeadRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/patients", patientRoutes);
 app.use("/api/content-posts", contentPostRoutes);
+app.use("/api/meta", metaRoutes);
 
 app.use((req, res) => res.status(404).json({ error: "Rota não encontrada." }));
 

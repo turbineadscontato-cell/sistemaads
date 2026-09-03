@@ -16,6 +16,8 @@ export default function UsersPanel() {
   const [form, setForm] = useState({ name: "", email: "", password: "", role: "GESTOR", clientId: "" });
   const [resetting, setResetting] = useState(null);
   const [resetPassword, setResetPassword] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [editRole, setEditRole] = useState({ role: "GESTOR", clientId: "" });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -57,6 +59,38 @@ export default function UsersPanel() {
       setResetting(null);
       setResetPassword("");
       alert(`Senha de ${u.name} atualizada.`);
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  function startEditRole(u) {
+    setEditingId(u.id);
+    setEditRole({ role: u.role, clientId: u.clientId || "" });
+  }
+
+  async function submitEditRole(u) {
+    if (editRole.role === "CLIENTE" && !editRole.clientId) {
+      alert("Selecione a qual cliente esse login pertence.");
+      return;
+    }
+    try {
+      await api(`/api/users/${u.id}`, {
+        method: "PATCH",
+        body: { role: editRole.role, clientId: editRole.role === "CLIENTE" ? editRole.clientId : null },
+      });
+      setEditingId(null);
+      load();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  async function deleteUser(u) {
+    if (!confirm(`Excluir permanentemente o login de "${u.name}"? Essa ação não pode ser desfeita.`)) return;
+    try {
+      await api(`/api/users/${u.id}`, { method: "DELETE" });
+      load();
     } catch (err) {
       alert(err.message);
     }
@@ -133,8 +167,33 @@ export default function UsersPanel() {
                     </div>
                   </td>
                   <td className="px-4.5 py-3 text-inksoft whitespace-nowrap">
-                    {ROLE_LABEL[u.role]}
-                    {u.role === "CLIENTE" && u.client && <div className="text-[10.5px] text-inkfaint">{u.client.name}</div>}
+                    {editingId === u.id ? (
+                      <div className="flex flex-col gap-1">
+                        <select value={editRole.role} onChange={(e) => setEditRole({ ...editRole, role: e.target.value, clientId: e.target.value === "CLIENTE" ? editRole.clientId : "" })}
+                          className="px-1.5 py-1 text-xs rounded-md border border-border bg-surface2 text-ink">
+                          <option value="GESTOR">Gestor de tráfego</option>
+                          <option value="ATENDENTE">Atendente</option>
+                          <option value="SOCIO">Sócio</option>
+                          <option value="CLIENTE">Cliente (portal)</option>
+                        </select>
+                        {editRole.role === "CLIENTE" && (
+                          <select value={editRole.clientId} onChange={(e) => setEditRole({ ...editRole, clientId: e.target.value })}
+                            className="px-1.5 py-1 text-xs rounded-md border border-border bg-surface2 text-ink">
+                            <option value="">Selecione o cliente</option>
+                            {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </select>
+                        )}
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => submitEditRole(u)} className="text-[11px] text-accent font-medium hover:underline">Salvar</button>
+                          <button onClick={() => setEditingId(null)} className="text-[11px] text-inkfaint hover:underline">Cancelar</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        {ROLE_LABEL[u.role]}
+                        {u.role === "CLIENTE" && u.client && <div className="text-[10.5px] text-inkfaint">{u.client.name}</div>}
+                      </>
+                    )}
                   </td>
                   <td className="px-4.5 py-3 whitespace-nowrap">
                     <span className={`pill ${u.active ? "pill-ATIVO" : "pill-CANCELADO"}`}>{u.active ? "Ativo" : "Desativado"}</span>
@@ -153,12 +212,18 @@ export default function UsersPanel() {
                         <button onClick={() => { setResetting(null); setResetPassword(""); }} className="text-xs text-inkfaint hover:underline">Cancelar</button>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-3 whitespace-nowrap">
+                      <div className="flex items-center gap-2.5 flex-wrap">
                         <button onClick={() => toggleActive(u)} className="text-xs text-inksoft hover:text-accent">
                           {u.active ? "Desativar" : "Reativar"}
                         </button>
                         <button onClick={() => setResetting(u.id)} className="text-xs text-inksoft hover:text-accent">
                           Redefinir senha
+                        </button>
+                        <button onClick={() => startEditRole(u)} className="text-xs text-inksoft hover:text-accent">
+                          Editar papel
+                        </button>
+                        <button onClick={() => deleteUser(u)} className="text-xs text-danger hover:underline">
+                          Excluir
                         </button>
                       </div>
                     )}

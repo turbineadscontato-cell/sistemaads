@@ -26,7 +26,7 @@ router.get("/", async (req, res) => {
 router.post("/", async (req, res) => {
   const clientId = ownClientId(req);
   if (!clientId) return res.status(400).json({ error: "Login não vinculado a um cliente." });
-  const { name, contact, status, sessionValue, paymentDueDay, paymentStatus, nextSessionAt, notes } = req.body || {};
+  const { name, contact, status, sessionValue, paymentDueDay, paymentStatus, nextSessionAt, notes, weekdays, sessionTime } = req.body || {};
   if (!name) return res.status(400).json({ error: "Nome do paciente é obrigatório." });
   const patient = await prisma.patient.create({
     data: {
@@ -39,6 +39,8 @@ router.post("/", async (req, res) => {
       paymentStatus: paymentStatus || "EM_DIA",
       nextSessionAt: nextSessionAt ? new Date(nextSessionAt) : null,
       notes: notes || null,
+      weekdays: Array.isArray(weekdays) ? weekdays.map(Number).filter((d) => d >= 0 && d <= 6) : [],
+      sessionTime: sessionTime || null,
     },
   });
   res.status(201).json(patient);
@@ -54,7 +56,7 @@ async function assertOwnPatient(req, id) {
 router.patch("/:id", async (req, res) => {
   const existing = await assertOwnPatient(req, req.params.id);
   if (!existing) return res.status(404).json({ error: "Paciente não encontrado." });
-  const { name, contact, status, sessionValue, paymentDueDay, paymentStatus, nextSessionAt, notes } = req.body || {};
+  const { name, contact, status, sessionValue, paymentDueDay, paymentStatus, nextSessionAt, notes, weekdays, sessionTime } = req.body || {};
   const patient = await prisma.patient.update({
     where: { id: req.params.id },
     data: {
@@ -66,6 +68,8 @@ router.patch("/:id", async (req, res) => {
       ...(paymentStatus !== undefined && { paymentStatus }),
       ...(nextSessionAt !== undefined && { nextSessionAt: nextSessionAt ? new Date(nextSessionAt) : null }),
       ...(notes !== undefined && { notes }),
+      ...(weekdays !== undefined && { weekdays: Array.isArray(weekdays) ? weekdays.map(Number).filter((d) => d >= 0 && d <= 6) : [] }),
+      ...(sessionTime !== undefined && { sessionTime: sessionTime || null }),
     },
   });
   res.json(patient);

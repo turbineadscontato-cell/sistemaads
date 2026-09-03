@@ -35,17 +35,19 @@ router.post("/", async (req, res) => {
   res.status(201).json(lead);
 });
 
+async function authorizeLead(req, existing) {
+  if (req.user.role === "CLIENTE") return existing.clientId === req.user.clientId;
+  if (req.user.role === "GESTOR") {
+    const owned = await prisma.client.findFirst({ where: { id: existing.clientId, gestorId: req.user.id } });
+    return !!owned;
+  }
+  return true; // SOCIO
+}
+
 router.patch("/:id", async (req, res) => {
   const existing = await prisma.clientLead.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: "Lead não encontrado." });
-
-  if (req.user.role === "CLIENTE" && existing.clientId !== req.user.clientId) {
-    return res.status(403).json({ error: "Sem acesso a esse lead." });
-  }
-  if (req.user.role === "GESTOR") {
-    const owned = await prisma.client.findFirst({ where: { id: existing.clientId, gestorId: req.user.id } });
-    if (!owned) return res.status(403).json({ error: "Sem acesso a esse lead." });
-  }
+  if (!(await authorizeLead(req, existing))) return res.status(403).json({ error: "Sem acesso a esse lead." });
 
   const { name, contact, origin, status, notes } = req.body || {};
   const lead = await prisma.clientLead.update({
@@ -59,6 +61,14 @@ router.patch("/:id", async (req, res) => {
     },
   });
   res.json(lead);
+});
+
+router.delete("/:id", async (req, res) => {
+  const existing = await prisma.clientLead.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Lead não encontrado." });
+  if (!(await authorizeLead(req, existing))) return res.status(403).json({ error: "Sem acesso a esse lead." });
+  await prisma.clientLead.delete({ where: { id: req.params.id } });
+  res.status(204).end();
 });
 
 module.exports = router;

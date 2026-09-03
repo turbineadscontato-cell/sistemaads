@@ -71,4 +71,31 @@ router.patch("/:id", requireRole("SOCIO"), async (req, res) => {
   }
 });
 
+router.delete("/:id", requireRole("SOCIO"), async (req, res) => {
+  if (req.params.id === req.user.id) {
+    return res.status(400).json({ error: "Você não pode excluir seu próprio login." });
+  }
+  const target = await prisma.user.findUnique({ where: { id: req.params.id } });
+  if (!target) return res.status(404).json({ error: "Usuário não encontrado." });
+
+  if (target.role === "SOCIO") {
+    const socioCount = await prisma.user.count({ where: { role: "SOCIO" } });
+    if (socioCount <= 1) {
+      return res.status(400).json({ error: "Não é possível excluir o único sócio do sistema." });
+    }
+  }
+
+  try {
+    await prisma.user.delete({ where: { id: req.params.id } });
+    res.status(204).end();
+  } catch (err) {
+    if (err.code === "P2003") {
+      return res.status(409).json({
+        error: "Este usuário está vinculado a clientes, tarefas, leads ou reuniões e não pode ser excluído. Reatribua esses vínculos ou apenas desative o login.",
+      });
+    }
+    throw err;
+  }
+});
+
 module.exports = router;

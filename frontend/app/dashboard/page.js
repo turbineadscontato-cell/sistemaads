@@ -10,6 +10,7 @@ import UsersPanel from "../../components/UsersPanel";
 import Reports from "../../components/Reports";
 import AIAssistants from "../../components/AIAssistants";
 import TaskTitleField from "../../components/TaskTitleField";
+import Campaigns from "../../components/Campaigns";
 
 const STATUS_LABEL = {
   ATIVO: "Ativo",
@@ -136,6 +137,7 @@ export default function Dashboard() {
   const canSeeUsuarios = user.role === "SOCIO";
   const canSeeRelatorios = user.role === "SOCIO";
   const canSeeAssistentes = user.role === "SOCIO" || user.role === "GESTOR";
+  const canSeeCampanhas = user.role === "SOCIO" || user.role === "GESTOR";
 
   const ativos = clients.filter((c) => c.status === "ATIVO").length;
   const pendentes = clients.filter((c) => c.status === "PENDENTE_PAGAMENTO").length;
@@ -149,6 +151,7 @@ export default function Dashboard() {
     canSeeCarteira && { key: "clientes", label: "Clientes" },
     canSeeCarteira && { key: "tarefas", label: "Tarefas" },
     canSeeAtendimento && { key: "atendimento", label: "CRM de atendimento" },
+    canSeeCampanhas && { key: "campanhas", label: "Campanhas" },
     canSeeRelatorios && { key: "relatorios", label: "Relatórios" },
     canSeeAssistentes && { key: "assistentes", label: "Assistentes IA" },
     canSeeUsuarios && { key: "usuarios", label: "Usuários" },
@@ -401,6 +404,7 @@ export default function Dashboard() {
         )}
 
         {tab === "atendimento" && canSeeAtendimento && <CRM />}
+        {tab === "campanhas" && canSeeCampanhas && <Campaigns />}
         {tab === "relatorios" && canSeeRelatorios && <Reports />}
         {tab === "assistentes" && canSeeAssistentes && <AIAssistants />}
         {tab === "usuarios" && canSeeUsuarios && <UsersPanel />}

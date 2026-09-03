@@ -13,6 +13,18 @@ const STAGES = [
   { key: "encerrado", label: "Encerrado" },
 ];
 
+// Weekly recurring attendance days — 0=domingo ... 6=sábado, matching the
+// backend's `weekdays` field. Drives the "Agenda semanal" drag-and-drop board.
+const WEEKDAYS = [
+  { key: 0, label: "Dom" },
+  { key: 1, label: "Seg" },
+  { key: 2, label: "Ter" },
+  { key: 3, label: "Qua" },
+  { key: 4, label: "Qui" },
+  { key: 5, label: "Sex" },
+  { key: 6, label: "Sáb" },
+];
+
 const PAYMENT_LABEL = { EM_DIA: "Em dia", PENDENTE: "Pendente", ATRASADO: "Atrasado" };
 const PAYMENT_CLASS = {
   EM_DIA: "bg-successsoft text-success",
@@ -39,12 +51,17 @@ function toDateTimeLocal(d) {
   return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
 }
 
-const EMPTY_FORM = { name: "", contact: "", sessionValue: "", paymentDueDay: "", paymentStatus: "EM_DIA", nextSessionAt: "", notes: "" };
+const EMPTY_FORM = { name: "", contact: "", sessionValue: "", paymentDueDay: "", paymentStatus: "EM_DIA", nextSessionAt: "", notes: "", weekdays: [], sessionTime: "" };
+
+function toggleDay(list, day) {
+  return list.includes(day) ? list.filter((d) => d !== day) : [...list, day].sort();
+}
 
 export default function PatientsBoard() {
   const [patients, setPatients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [view, setView] = useState("status"); // status | agenda
   const [showNew, setShowNew] = useState(false);
   const [newForm, setNewForm] = useState(EMPTY_FORM);
   const [expandedId, setExpandedId] = useState(null);
@@ -52,6 +69,8 @@ export default function PatientsBoard() {
   const [notesById, setNotesById] = useState({});
   const [noteDraft, setNoteDraft] = useState("");
   const [savingNote, setSavingNote] = useState(false);
+  const [dragOverDay, setDragOverDay] = useState(null);
+  const [movingId, setMovingId] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -78,6 +97,7 @@ export default function PatientsBoard() {
           sessionValue: newForm.sessionValue || undefined,
           paymentDueDay: newForm.paymentDueDay || undefined,
           nextSessionAt: newForm.nextSessionAt || undefined,
+          sessionTime: newForm.sessionTime || undefined,
         },
       });
       setNewForm(EMPTY_FORM);
@@ -97,6 +117,83 @@ export default function PatientsBoard() {
     }
   }
 
+  // Drag-and-drop between day columns in the weekly agenda. Dropping a card
+  // on a new day removes it from the day it was dragged out of (fromDay, or
+  // null when dragged in fresh from nowhere in particular) and adds the
+  // dropped-on day — a patient can still attend more than one day a week,
+  // this just makes moving a single day painless.
+  async function moveDay(patientId, fromDay, toDay) {
+    const patient = patients.find((p) => p.id === patientId);
+    if (!patient) return;
+    const current = patient.weekdays || [];
+    if (fromDay === toDay) return;
+    let next = fromDay != null ? current.filter((d) => d !== fromDay) : current.slice();
+    if (!next.includes(toDay)) next = [...next, toDay].sort();
+    setMovingId(patientId);
+    try {
+      await api(`/api/patients/${patientId}`, { method: "PATCH", body: { weekdays: next } });
+      load();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setMovingId(null);
+    }
+  }
+
+  async function removeDay(patientId, day) {
+    const patient = patients.find((p) => p.id === patientId);
+    if (!patient) return;
+    const next = (patient.weekdays || []).filter((d) => d !== day);
+    try {
+      await api(`/api/patients/${patientId}`, { method: "PATCH", body: { weekdays: next } });
+      load();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  function printReport(p) {
+    const notes = notesById[p.id] || [];
+    const win = window.open("", "_blank", "width=680,height=800");
+    if (!win) return;
+    const daysLabel = (p.weekdays || []).map((d) => WEEKDAYS.find((w) => w.key === d)?.label).filter(Boolean).join(", ") || "—";
+    win.document.write(`
+      <html>
+        <head>
+          <title>Relatório — ${p.name}</title>
+          <meta charset="utf-8" />
+          <style>
+            body { font-family: -apple-system, Arial, sans-serif; color: #111; padding: 32px; max-width: 640px; margin: 0 auto; }
+            h1 { font-size: 18px; margin-bottom: 2px; }
+            .meta { color: #555; font-size: 12px; margin-bottom: 18px; }
+            .meta span { display: inline-block; margin-right: 14px; }
+            .note { border-top: 1px solid #ddd; padding: 10px 0; }
+            .note .date { font-size: 11px; color: #777; font-family: monospace; }
+            .note .content { margin-top: 3px; white-space: pre-wrap; }
+            .empty { color: #888; font-size: 13px; padding: 12px 0; }
+          </style>
+        </head>
+        <body>
+          <h1>${p.name}</h1>
+          <div class="meta">
+            <span>Situação: ${p.status}</span>
+            <span>Pagamento: ${PAYMENT_LABEL[p.paymentStatus] || p.paymentStatus}</span>
+            <span>Dias de atendimento: ${daysLabel}${p.sessionTime ? " às " + p.sessionTime : ""}</span>
+          </div>
+          ${notes.length === 0 ? '<div class="empty">Nenhum relatório registrado ainda.</div>' : notes.map((n) => `
+            <div class="note">
+              <div class="date">${fmtDateTime(n.createdAt)}</div>
+              <div class="content">${(n.content || "").replace(/</g, "&lt;")}</div>
+            </div>
+          `).join("")}
+        </body>
+      </html>
+    `);
+    win.document.close();
+    win.focus();
+    win.print();
+  }
+
   function openCard(p) {
     if (expandedId === p.id) {
       setExpandedId(null);
@@ -111,6 +208,8 @@ export default function PatientsBoard() {
       paymentStatus: p.paymentStatus,
       nextSessionAt: toDateTimeLocal(p.nextSessionAt),
       notes: p.notes || "",
+      weekdays: p.weekdays || [],
+      sessionTime: p.sessionTime || "",
     });
     if (!notesById[p.id]) loadNotes(p.id);
   }
@@ -133,6 +232,7 @@ export default function PatientsBoard() {
           sessionValue: editForm.sessionValue || null,
           paymentDueDay: editForm.paymentDueDay || null,
           nextSessionAt: editForm.nextSessionAt || null,
+          sessionTime: editForm.sessionTime || null,
         },
       });
       load();
@@ -182,6 +282,21 @@ export default function PatientsBoard() {
         </button>
       </div>
 
+      <div className="flex gap-1 bg-surface border border-border rounded-lg p-1 w-fit">
+        <button
+          onClick={() => setView("status")}
+          className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${view === "status" ? "bg-accent text-white" : "text-inksoft hover:text-ink"}`}
+        >
+          Por etapa
+        </button>
+        <button
+          onClick={() => setView("agenda")}
+          className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${view === "agenda" ? "bg-accent text-white" : "text-inksoft hover:text-ink"}`}
+        >
+          Agenda semanal
+        </button>
+      </div>
+
       {showNew && (
         <form onSubmit={createPatient} className="bg-surface border border-border rounded-xl shadow-sm p-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
           <input required placeholder="Nome do paciente" value={newForm.name} onChange={(e) => setNewForm({ ...newForm, name: e.target.value })}
@@ -198,12 +313,26 @@ export default function PatientsBoard() {
             className="px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink">
             {Object.entries(PAYMENT_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
+          <input type="time" value={newForm.sessionTime} onChange={(e) => setNewForm({ ...newForm, sessionTime: e.target.value })}
+            placeholder="Horário" className="px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink mono" />
+          <div className="sm:col-span-3">
+            <label className="block text-[11px] text-inkfaint mb-1">Dias de atendimento (semana)</label>
+            <div className="flex flex-wrap gap-1">
+              {WEEKDAYS.map((d) => (
+                <button type="button" key={d.key} onClick={() => setNewForm({ ...newForm, weekdays: toggleDay(newForm.weekdays, d.key) })}
+                  className={`text-[10.5px] px-2 py-1 rounded-md border font-medium ${newForm.weekdays.includes(d.key) ? "bg-accent border-accent text-white" : "border-border text-inksoft hover:border-accent"}`}>
+                  {d.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <button className="bg-accent text-white text-sm font-medium px-3 py-1.5 rounded-md hover:bg-accentink sm:col-span-3">
             Adicionar paciente
           </button>
         </form>
       )}
 
+      {view === "status" && (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {STAGES.map((stage) => {
           const items = patients.filter((p) => p.status === stage.key);
@@ -262,11 +391,29 @@ export default function PatientsBoard() {
                           </div>
                           <textarea value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} placeholder="Observações gerais" rows={2}
                             className="w-full px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink resize-y" />
+
+                          <div>
+                            <label className="block text-[10.5px] text-inkfaint mb-1">Dias de atendimento / horário</label>
+                            <div className="flex flex-wrap items-center gap-1">
+                              {WEEKDAYS.map((d) => (
+                                <button type="button" key={d.key} onClick={() => setEditForm({ ...editForm, weekdays: toggleDay(editForm.weekdays, d.key) })}
+                                  className={`text-[10px] px-1.5 py-1 rounded-md border font-medium ${editForm.weekdays.includes(d.key) ? "bg-accent border-accent text-white" : "border-border text-inksoft hover:border-accent"}`}>
+                                  {d.label}
+                                </button>
+                              ))}
+                              <input type="time" value={editForm.sessionTime} onChange={(e) => setEditForm({ ...editForm, sessionTime: e.target.value })}
+                                className="px-1.5 py-1 text-[11px] rounded-md border border-border bg-surface2 text-ink mono w-[88px]" />
+                            </div>
+                          </div>
+
                           <div className="flex items-center justify-between gap-2">
                             <button onClick={() => saveEdit(p)} className="text-[11px] bg-accent text-white font-medium px-2.5 py-1 rounded-md hover:bg-accentink">
                               Salvar
                             </button>
-                            <button onClick={() => removePatient(p)} className="text-[11px] text-danger hover:underline">Remover paciente</button>
+                            <div className="flex items-center gap-3">
+                              <button onClick={() => printReport(p)} className="text-[11px] text-inksoft hover:text-accent">Imprimir relatório</button>
+                              <button onClick={() => removePatient(p)} className="text-[11px] text-danger hover:underline">Remover paciente</button>
+                            </div>
                           </div>
 
                           <div className="border-t border-border pt-2 space-y-1.5">
@@ -300,6 +447,68 @@ export default function PatientsBoard() {
           );
         })}
       </div>
+      )}
+
+      {view === "agenda" && (
+        <div className="space-y-2">
+          <p className="text-[11px] text-inkfaint">Arraste um paciente para o dia da semana em que ele atende. Um paciente pode aparecer em mais de um dia.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2.5">
+            {WEEKDAYS.map((day) => {
+              const items = patients.filter((p) => (p.weekdays || []).includes(day.key));
+              return (
+                <div
+                  key={day.key}
+                  onDragOver={(e) => { e.preventDefault(); setDragOverDay(day.key); }}
+                  onDragLeave={() => setDragOverDay((d) => (d === day.key ? null : d))}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDragOverDay(null);
+                    let data = {};
+                    try { data = JSON.parse(e.dataTransfer.getData("text/plain")); } catch { /* ignore */ }
+                    if (data.id) moveDay(data.id, data.fromDay ?? null, day.key);
+                  }}
+                  className={`min-h-[120px] rounded-xl border p-2 transition ${
+                    dragOverDay === day.key ? "border-accent bg-accentsoft/40" : "border-border bg-surface2/40"
+                  }`}
+                >
+                  <div className="flex items-center justify-between px-0.5 mb-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-inkfaint">{day.label}</span>
+                    <span className="text-[10px] text-inkfaint mono">{items.length}</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {items.map((p) => (
+                      <div
+                        key={p.id}
+                        draggable
+                        onDragStart={(e) => e.dataTransfer.setData("text/plain", JSON.stringify({ id: p.id, fromDay: day.key }))}
+                        className={`bg-surface border border-border rounded-lg p-2 shadow-sm cursor-grab active:cursor-grabbing hover:border-accent/50 transition ${movingId === p.id ? "opacity-50" : ""}`}
+                      >
+                        <div className="text-xs font-medium text-ink truncate">{p.name}</div>
+                        <div className="flex items-center justify-between gap-1 mt-0.5">
+                          <span className="text-[10px] mono text-inkfaint">{p.sessionTime || "sem horário"}</span>
+                          <button
+                            onClick={() => removeDay(p.id, day.key)}
+                            title="Remover deste dia"
+                            className="text-[10px] text-inkfaint hover:text-danger leading-none"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {items.length === 0 && <div className="text-[10px] text-inkfaint text-center py-2">—</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {patients.filter((p) => (p.weekdays || []).length === 0).length > 0 && (
+            <div className="text-[11px] text-inkfaint">
+              Sem dia definido: {patients.filter((p) => (p.weekdays || []).length === 0).map((p) => p.name).join(", ")}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

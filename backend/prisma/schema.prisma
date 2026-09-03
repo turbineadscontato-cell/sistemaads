@@ -57,6 +57,7 @@ model User {
   tasks          Task[]    @relation("GestorTasks")
   leads          Lead[]    @relation("AtendenteLeads")
   meetings       Meeting[] @relation("ResponsavelMeetings")
+  metaConnections MetaConnection[]
 
   // Set only for role = CLIENTE: which client's portal this login can see.
   clientId String?
@@ -90,6 +91,7 @@ model Client {
   reports      MonthlyReport[]
   patients     Patient[]
   contentPosts ContentPost[]
+  adAccounts   AdAccount[]
 }
 
 model Payment {
@@ -225,6 +227,12 @@ model Patient {
   notes         String?
   createdAt     DateTime  @default(now())
 
+  // Recurring weekly attendance pattern (independent of nextSessionAt, which
+  // is the next confirmed occurrence). 0=domingo ... 6=sábado. Drives the
+  // weekly agenda board — dragging a patient card to another day updates this.
+  weekdays    Int[]   @default([])
+  sessionTime String? // "HH:MM", the usual time for these weekly sessions
+
   clientId String
   client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
@@ -253,4 +261,36 @@ model ContentPost {
 
   clientId String
   client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+}
+
+// One row per Meta (Facebook/Instagram) Ads login the agency has connected.
+// Only a sócio can connect; the most recent row is treated as the active
+// connection. The token is a long-lived user or system-user token exchanged
+// server-side — never the short-lived token the JS SDK hands back.
+model MetaConnection {
+  id             String    @id @default(cuid())
+  accessToken    String    @db.Text
+  tokenExpiresAt DateTime?
+  metaUserId     String?
+  metaUserName   String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  connectedById String
+  connectedBy   User   @relation(fields: [connectedById], references: [id])
+}
+
+// A Meta ad account (act_XXXXXXXXX) discovered through the connection above,
+// optionally mapped to one of the agency's clients so campaign metrics can be
+// shown on that client's page and scoped to that client's gestor.
+model AdAccount {
+  id            String   @id @default(cuid())
+  metaAccountId String   @unique // "act_123456789"
+  name          String
+  currency      String?
+  accountStatus String? // Meta's own status label, e.g. "ATIVA", "DESATIVADA"
+  createdAt     DateTime @default(now())
+
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id])
 }
