@@ -24,6 +24,7 @@ const MOODS = [
 
 const TABS = [
   { key: "inicio", label: "Início" },
+  { key: "sessao", label: "Sessão" },
   { key: "agenda", label: "Agenda" },
   { key: "atividades", label: "Atividades" },
   { key: "relatorios", label: "Relatórios" },
@@ -43,6 +44,11 @@ function toDateTimeLocal(d) {
   const dt = new Date(d);
   const pad = (n) => String(n).padStart(2, "0");
   return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+}
+function fmtWeekday(d) {
+  if (!d) return "";
+  const label = new Date(d).toLocaleDateString("pt-BR", { weekday: "short" });
+  return label.charAt(0).toUpperCase() + label.slice(1).replace(".", "");
 }
 
 export default function PatientPortal() {
@@ -208,15 +214,59 @@ export default function PatientPortal() {
                 <div className="font-display font-semibold text-base mt-1 text-ink">{attendanceDays.length ? attendanceDays.join(", ") : "—"}{patient.sessionTime ? ` · ${patient.sessionTime}` : ""}</div>
               </div>
             </div>
-            {patient.meetLink && (
-              <a href={patient.meetLink} target="_blank" rel="noopener noreferrer"
-                className="block w-full sm:w-fit text-center bg-accent text-white text-sm font-medium px-5 py-2.5 rounded-lg hover:bg-accentink transition">
-                Entrar na sessão (Google Meet)
-              </a>
-            )}
+            <button onClick={() => setTab("sessao")}
+              className="block w-full sm:w-fit text-center bg-accent text-white text-sm font-medium px-5 py-2.5 rounded-lg hover:bg-accentink transition">
+              Iniciar sessão por vídeo
+            </button>
             {patient.requestedSessionAt && (
               <div className="bg-warningsoft border border-warning/30 rounded-lg px-3.5 py-2.5 text-sm text-ink">
                 Você pediu para mudar sua sessão para <span className="mono">{fmtDateTime(patient.requestedSessionAt)}</span> — aguardando confirmação.
+              </div>
+            )}
+            {patient.sessionSchedule && (
+              <div className="bg-surface border border-border rounded-xl shadow-sm p-4">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="text-[11px] uppercase tracking-wide text-inkfaint">Seu pacote de sessões</div>
+                  <span className="text-[10.5px] px-2 py-0.5 rounded-full font-medium bg-surface2 text-inksoft border border-border">
+                    {patient.sessionSchedule.completed}/{patient.sessionSchedule.total} realizadas
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  {patient.sessionSchedule.dates.map((d, i) => {
+                    const past = new Date(d) < new Date();
+                    return (
+                      <div key={d} className={`flex items-center justify-between text-sm gap-2 ${past ? "text-inkfaint line-through" : "text-ink"}`}>
+                        <span>Sessão {i + 1}</span>
+                        <span className="mono text-[13px]">{fmtWeekday(d)}, {fmtDateTime(d)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === "sessao" && (
+          <div className="space-y-4">
+            <div>
+              <h2 className="font-display font-semibold text-base text-ink">Sessão por vídeo</h2>
+              <p className="text-[11px] text-inkfaint mt-0.5">Sua sessão acontece pelo Google Meet — clique abaixo pra entrar.</p>
+            </div>
+            {patient.meetLink ? (
+              <div className="bg-surface border border-border rounded-xl shadow-sm p-6 text-center space-y-3">
+                <div className="text-sm text-inksoft">Tudo pronto — sua sala de sessão está aberta.</div>
+                <a href={patient.meetLink} target="_blank" rel="noopener noreferrer"
+                  className="inline-block bg-accent text-white text-sm font-medium px-6 py-3 rounded-lg hover:bg-accentink transition">
+                  Entrar na sessão agora
+                </a>
+                <div className="text-[10.5px] text-inkfaint">Abre o Google Meet numa aba nova.</div>
+              </div>
+            ) : (
+              <div className="bg-surface border border-border rounded-xl shadow-sm p-6 text-center space-y-2">
+                <div className="text-sm text-inksoft">Ainda não tem um link de sessão configurado.</div>
+                <div className="text-[11px] text-inkfaint">Assim que quem te atende iniciar a sessão, o link aparece aqui automaticamente.</div>
+                <button onClick={load} className="text-xs text-accent hover:underline mt-1">Atualizar</button>
               </div>
             )}
           </div>

@@ -50,6 +50,17 @@ function toDateTimeLocal(d) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
 }
+function toDateOnly(d) {
+  if (!d) return "";
+  const dt = new Date(d);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+}
+function fmtWeekday(d) {
+  if (!d) return "";
+  const label = new Date(d).toLocaleDateString("pt-BR", { weekday: "short" });
+  return label.charAt(0).toUpperCase() + label.slice(1).replace(".", "");
+}
 
 const EMPTY_FORM = { name: "", contact: "", sessionValue: "", paymentDueDay: "", paymentStatus: "EM_DIA", nextSessionAt: "", notes: "", weekdays: [], sessionTime: "" };
 
@@ -74,6 +85,7 @@ export default function PatientsBoard() {
   const [activitiesById, setActivitiesById] = useState({});
   const [activityDraft, setActivityDraft] = useState({ title: "", dueDate: "" });
   const [savingActivity, setSavingActivity] = useState(false);
+  const [editingMeetLink, setEditingMeetLink] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -214,7 +226,10 @@ export default function PatientsBoard() {
       weekdays: p.weekdays || [],
       sessionTime: p.sessionTime || "",
       meetLink: p.meetLink || "",
+      packageTotalSessions: p.packageTotalSessions ?? "",
+      packageStartDate: toDateOnly(p.packageStartDate) || toDateOnly(p.createdAt),
     });
+    setEditingMeetLink(false);
     setActivityDraft({ title: "", dueDate: "" });
     if (!notesById[p.id]) loadNotes(p.id);
     if (!activitiesById[p.id]) loadActivities(p.id);
@@ -305,12 +320,24 @@ export default function PatientsBoard() {
           nextSessionAt: editForm.nextSessionAt || null,
           sessionTime: editForm.sessionTime || null,
           meetLink: editForm.meetLink || null,
+          packageTotalSessions: editForm.packageTotalSessions || null,
+          packageStartDate: editForm.packageStartDate || null,
         },
       });
+      setEditingMeetLink(false);
       load();
     } catch (err) {
       alert(err.message);
     }
+  }
+
+  // Opens a fresh Google Meet instant-meeting room in a new tab — Meet
+  // generates the room itself (no API/OAuth needed on our side); the
+  // professional copies that generated link back into the field below so it
+  // becomes this patient's fixed session link for both sides to reuse.
+  function generateMeetLink() {
+    window.open("https://meet.google.com/new", "_blank", "noopener,noreferrer");
+    setEditingMeetLink(true);
   }
 
   async function removePatient(p) {
@@ -492,10 +519,62 @@ export default function PatientsBoard() {
                             </div>
                           </div>
 
-                          <div>
-                            <label className="block text-[10.5px] text-inkfaint mb-1">Link da sessão (Google Meet)</label>
-                            <input value={editForm.meetLink} onChange={(e) => setEditForm({ ...editForm, meetLink: e.target.value })} placeholder="https://meet.google.com/xxx-xxxx-xxx"
-                              className="w-full px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink" />
+                          <div className="border-t border-border pt-2">
+                            <label className="block text-[10.5px] text-inkfaint mb-1">Pacote de sessões contratadas</label>
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <input type="number" min="1" value={editForm.packageTotalSessions}
+                                onChange={(e) => setEditForm({ ...editForm, packageTotalSessions: e.target.value })} placeholder="Qtd. sessões"
+                                className="px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink mono" />
+                              <input type="date" value={editForm.packageStartDate}
+                                onChange={(e) => setEditForm({ ...editForm, packageStartDate: e.target.value })}
+                                className="px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink mono" />
+                            </div>
+                            <div className="text-[10px] text-inkfaint mt-1">
+                              {editForm.weekdays.length > 0
+                                ? `${editForm.weekdays.length}x por semana (baseado nos dias marcados acima) — as datas são calculadas automaticamente a partir da data de início.`
+                                : "Marque pelo menos um dia de atendimento acima pra calcular as datas."}
+                            </div>
+                            {p.sessionSchedule && (
+                              <div className="mt-2 bg-surface2 border border-border rounded-md px-2 py-1.5 space-y-1">
+                                <div className="flex items-center justify-between text-[10.5px]">
+                                  <span className="text-inksoft font-medium">{p.sessionSchedule.completed}/{p.sessionSchedule.total} sessões realizadas</span>
+                                </div>
+                                <div className="max-h-24 overflow-y-auto space-y-0.5">
+                                  {p.sessionSchedule.dates.map((d, i) => (
+                                    <div key={d} className={`flex items-center justify-between text-[10px] ${new Date(d) < new Date() ? "text-inkfaint line-through" : "text-ink"}`}>
+                                      <span>Sessão {i + 1}</span>
+                                      <span className="mono">{fmtWeekday(d)}, {fmtDateTime(d)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="border-t border-border pt-2">
+                            <label className="block text-[10.5px] text-inkfaint mb-1">Sessão por vídeo (Google Meet)</label>
+                            {p.meetLink && !editingMeetLink ? (
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <a href={p.meetLink} target="_blank" rel="noopener noreferrer"
+                                  className="text-[11px] bg-accent text-white font-medium px-2.5 py-1 rounded-md hover:bg-accentink">
+                                  Iniciar sessão
+                                </a>
+                                <button type="button" onClick={() => setEditingMeetLink(true)} className="text-[10.5px] text-inksoft hover:text-accent">
+                                  Trocar link
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="space-y-1.5">
+                                <div className="flex gap-1.5">
+                                  <input value={editForm.meetLink} onChange={(e) => setEditForm({ ...editForm, meetLink: e.target.value })} placeholder="Cole aqui o link gerado no Meet"
+                                    className="flex-1 min-w-0 px-2 py-1 text-xs rounded-md border border-border bg-surface2 text-ink" />
+                                  <button type="button" onClick={generateMeetLink} className="text-[10.5px] shrink-0 border border-border rounded-md px-2 py-1 text-inksoft hover:border-accent hover:text-accent">
+                                    Gerar no Meet
+                                  </button>
+                                </div>
+                                <div className="text-[10px] text-inkfaint">Clique em "Gerar no Meet" pra abrir uma sala nova, copie o link e cole aqui — depois é só salvar.</div>
+                              </div>
+                            )}
                           </div>
 
                           <div className="flex items-center justify-between gap-2">

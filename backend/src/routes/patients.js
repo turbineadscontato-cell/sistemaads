@@ -2,6 +2,7 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const prisma = require("../prisma");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { computeSessionSchedule } = require("../utils/sessionSchedule");
 
 const router = express.Router();
 router.use(requireAuth);
@@ -25,14 +26,23 @@ router.get("/", async (req, res) => {
   // A patient can have at most one portal login (enforced on create) — flatten
   // the array relation into a single `portalUser` field so the frontend
   // (Kanban board + the dedicated "Acessos" tab) doesn't need a second request
-  // per patient just to know whether a login exists.
-  res.json(patients.map(({ portalUser, ...p }) => ({ ...p, portalUser: portalUser[0] || null })));
+  // per patient just to know whether a login exists. Also attach the computed
+  // session-package schedule (dates + progress) so the board can show it
+  // without recomputing weekday math client-side.
+  res.json(patients.map(({ portalUser, ...p }) => ({
+    ...p,
+    portalUser: portalUser[0] || null,
+    sessionSchedule: computeSessionSchedule(p),
+  })));
 });
 
 router.post("/", async (req, res) => {
   const clientId = ownClientId(req);
   if (!clientId) return res.status(400).json({ error: "Login não vinculado a um cliente." });
-  const { name, contact, status, sessionValue, paymentDueDay, paymentStatus, nextSessionAt, notes, weekdays, sessionTime, meetLink } = req.body || {};
+  const {
+    name, contact, status, sessionValue, paymentDueDay, paymentStatus, nextSessionAt, notes, weekdays, sessionTime, meetLink,
+    packageTotalSessions, packageStartDate,
+  } = req.body || {};
   if (!name) return res.status(400).json({ error: "Nome do paciente é obrigatório." });
   const patient = await prisma.patient.create({
     data: {
@@ -48,6 +58,8 @@ router.post("/", async (req, res) => {
       weekdays: Array.isArray(weekdays) ? weekdays.map(Number).filter((d) => d >= 0 && d <= 6) : [],
       sessionTime: sessionTime || null,
       meetLink: meetLink || null,
+      packageTotalSessions: packageTotalSessions !== undefined && packageTotalSessions !== "" ? Number(packageTotalSessions) : null,
+      packageStartDate: packageStartDate ? new Date(packageStartDate) : null,
     },
   });
   res.status(201).json(patient);
@@ -65,6 +77,7 @@ router.patch("/:id", async (req, res) => {
   if (!existing) return res.status(404).json({ error: "Paciente não encontrado." });
   const {
     name, contact, status, sessionValue, paymentDueDay, paymentStatus, nextSessionAt, notes, weekdays, sessionTime, meetLink,
+    packageTotalSessions, packageStartDate,
     approveRequest, declineRequest,
   } = req.body || {};
 
@@ -80,6 +93,8 @@ router.patch("/:id", async (req, res) => {
     ...(weekdays !== undefined && { weekdays: Array.isArray(weekdays) ? weekdays.map(Number).filter((d) => d >= 0 && d <= 6) : [] }),
     ...(sessionTime !== undefined && { sessionTime: sessionTime || null }),
     ...(meetLink !== undefined && { meetLink: meetLink || null }),
+    ...(packageTotalSessions !== undefined && { packageTotalSessions: packageTotalSessions !== "" ? Number(packageTotalSessions) : null }),
+    ...(packageStartDate !== undefined && { packageStartDate: packageStartDate ? new Date(packageStartDate) : null }),
   };
 
   // Patient asked (from their own portal) to move their next session — the

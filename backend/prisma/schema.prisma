@@ -257,8 +257,18 @@ model Patient {
 
   // Recurring video-call link for this patient's sessions (e.g. a fixed
   // Google Meet room the professional reuses). Just a plain URL — no
-  // calendar/Meet API integration.
+  // calendar/Meet API integration; the frontend offers a shortcut that opens
+  // meet.google.com/new so the professional can generate a fresh Meet room
+  // and paste it back here, rather than typing/thinking one up by hand.
   meetLink String?
+
+  // Contracted session package — how many sessions were sold and, combined
+  // with `weekdays` above (how many of those days are marked = sessions per
+  // week), used to compute the full calendar of session dates shown to both
+  // the professional (PatientsBoard) and the patient (paciente-portal).
+  // packageStartDate anchors the calculation; defaults to createdAt when unset.
+  packageTotalSessions Int?
+  packageStartDate     DateTime?
 
   // Set by the patient from their own portal when they ask to change their
   // next session — the professional approves (copies into nextSessionAt and

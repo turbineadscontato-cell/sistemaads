@@ -1,6 +1,7 @@
 const express = require("express");
 const prisma = require("../prisma");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { computeSessionSchedule } = require("../utils/sessionSchedule");
 
 const router = express.Router();
 router.use(requireAuth);
@@ -24,7 +25,7 @@ router.get("/me", async (req, res) => {
   });
   if (!patient) return res.status(404).json({ error: "Paciente não encontrado." });
   const { notes, ...safe } = patient; // internal notes field stays professional-only
-  res.json(safe);
+  res.json({ ...safe, sessionSchedule: computeSessionSchedule(patient) });
 });
 
 router.get("/notes", async (req, res) => {
