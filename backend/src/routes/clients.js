@@ -21,6 +21,10 @@ router.get("/", async (req, res) => {
       gestor: { select: { id: true, name: true } },
       payments: { orderBy: { dueDate: "desc" }, take: 1 },
       pendencies: { where: { status: "ABERTA" }, select: { id: true } },
+      // Surfaced in the "quick info" panel (client/task click) so a gestor
+      // doesn't need to open Campanhas just to see which conta de anúncio a
+      // client is mapped to before working on something like an otimização.
+      adAccounts: { select: { id: true, name: true, accountStatus: true } },
     },
     orderBy: { name: "asc" },
   });

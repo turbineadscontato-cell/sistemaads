@@ -28,6 +28,11 @@ function fmtDate(d) {
   return new Date(d).toLocaleDateString("pt-BR");
 }
 
+function currency(n) {
+  if (n == null || n === "") return "—";
+  return Number(n).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
 function isOverdue(dueDate, status) {
   if (!dueDate || status === "CONCLUIDA") return false;
   const d = new Date(dueDate);
@@ -51,6 +56,11 @@ export default function Dashboard() {
 
   const [newClient, setNewClient] = useState({ name: "", niche: "", plan: "", monthlyValue: "", gestorId: "", optimizationDay: "" });
   const [newTask, setNewTask] = useState({ title: "", clientId: "", gestorId: "", priority: "MEDIA", dueDate: "" });
+
+  // Painel rápido "quem é esse cliente" — aberto ao clicar no nome do cliente
+  // dentro de uma tarefa, pra dar contexto (nicho, verba, conta de anúncio,
+  // observações) sem precisar sair da aba Tarefas pra abrir a página completa.
+  const [infoClientId, setInfoClientId] = useState(null);
 
   useEffect(() => {
     const u = getUser();
@@ -425,7 +435,10 @@ export default function Dashboard() {
                                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${t.priority === "ALTA" ? "bg-danger" : t.priority === "MEDIA" ? "bg-warning" : "bg-inkfaint"}`} />
                                   <span className={`text-[13px] font-medium truncate ${t.status === "CONCLUIDA" ? "line-through text-inkfaint" : "text-ink"}`}>{t.title}</span>
                                 </div>
-                                <div className="text-[10.5px] text-inkfaint truncate mt-0.5">{t.client?.name}</div>
+                                <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setInfoClientId(t.clientId || t.client?.id); }}
+                                  className="block text-[10.5px] text-inkfaint hover:text-accent hover:underline truncate mt-0.5 text-left">
+                                  {t.client?.name}
+                                </button>
                                 <div className={`text-[10.5px] mono mt-0.5 ${overdue ? "text-danger font-semibold" : "text-inksoft"}`}>
                                   {overdue ? "atrasada · " : ""}{fmtDate(t.dueDate)}
                                 </div>
@@ -450,7 +463,10 @@ export default function Dashboard() {
                       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${t.priority === "ALTA" ? "bg-danger" : t.priority === "MEDIA" ? "bg-warning" : "bg-inkfaint"}`} />
                       <div className="flex-1 min-w-0">
                         <div className={`text-sm font-medium truncate ${t.status === "CONCLUIDA" ? "line-through text-inkfaint" : "text-ink"}`}>{t.title}</div>
-                        <div className="text-xs text-inkfaint truncate">{t.client?.name}</div>
+                        <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setInfoClientId(t.clientId || t.client?.id); }}
+                          className="block text-xs text-inkfaint hover:text-accent hover:underline truncate text-left">
+                          {t.client?.name}
+                        </button>
                       </div>
                       <div className={`text-xs mono shrink-0 ${overdue ? "text-danger font-semibold" : "text-inksoft"}`}>
                         {overdue ? "atrasada · " : ""}{fmtDate(t.dueDate)}
@@ -470,6 +486,86 @@ export default function Dashboard() {
         {tab === "assistentes" && canSeeAssistentes && <AIAssistants />}
         {tab === "usuarios" && canSeeUsuarios && <UsersPanel />}
       </main>
+
+      {/* Painel rápido "quem é esse cliente" — aberto ao clicar no nome do
+          cliente dentro de uma tarefa. Mostra de cara o nicho (ex: "psicóloga"),
+          plano, verba/otimização e a conta de anúncio vinculada, sem precisar
+          sair da aba Tarefas pra abrir a página completa do cliente. */}
+      {infoClientId && (() => {
+        const c = clients.find((x) => x.id === infoClientId);
+        if (!c) return null;
+        return (
+          <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center">
+            <div onClick={() => setInfoClientId(null)} className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+            <div className="relative w-full sm:max-w-md bg-surface border border-border sm:rounded-2xl rounded-t-2xl shadow-2xl max-h-[85vh] overflow-y-auto">
+              <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-border">
+                <div className="min-w-0">
+                  <div className="text-[11px] uppercase tracking-wide text-inkfaint">{c.niche || "nicho não informado"}</div>
+                  <h3 className="font-display font-semibold text-lg text-ink truncate">{c.name}</h3>
+                  <span className={`pill pill-${c.status} mt-1.5`}>{STATUS_LABEL[c.status]}</span>
+                </div>
+                <button onClick={() => setInfoClientId(null)} aria-label="Fechar"
+                  className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-inksoft hover:text-ink hover:bg-white/5 transition">
+                  <svg width="16" height="16" viewBox="0 0 18 18" fill="none"><path d="M4 4l10 10M14 4L4 14" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg>
+                </button>
+              </div>
+
+              <div className="px-5 py-4 space-y-3">
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="bg-surface2 border border-border rounded-lg px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-inkfaint">Plano</div>
+                    <div className="text-sm text-ink mt-0.5">{c.plan || "—"}</div>
+                  </div>
+                  <div className="bg-surface2 border border-border rounded-lg px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-inkfaint">Mensalidade</div>
+                    <div className="text-sm text-ink mono mt-0.5">{currency(c.monthlyValue)}</div>
+                  </div>
+                  {c.planType !== "SO_SISTEMA" && (
+                    <>
+                      <div className="bg-surface2 border border-border rounded-lg px-3 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-inkfaint">Verba diária</div>
+                        <div className="text-sm text-ink mono mt-0.5">{currency(c.dailyAdBudget)}</div>
+                      </div>
+                      <div className="bg-surface2 border border-border rounded-lg px-3 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-inkfaint">Dia de otimização</div>
+                        <div className="text-sm text-ink mono mt-0.5">{c.optimizationDay || "—"}</div>
+                      </div>
+                      <div className="bg-surface2 border border-border rounded-lg px-3 py-2 col-span-2">
+                        <div className="text-[10px] uppercase tracking-wide text-inkfaint">Criativo em veiculação</div>
+                        <div className="text-sm text-ink mt-0.5 truncate">{c.activeCreative || "—"}</div>
+                      </div>
+                      <div className="bg-surface2 border border-border rounded-lg px-3 py-2 col-span-2">
+                        <div className="text-[10px] uppercase tracking-wide text-inkfaint">Conta de anúncio</div>
+                        <div className="text-sm text-ink mt-0.5">
+                          {c.adAccounts && c.adAccounts.length > 0
+                            ? c.adAccounts.map((a) => a.name).join(", ")
+                            : "nenhuma conta vinculada"}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                  <div className="bg-surface2 border border-border rounded-lg px-3 py-2 col-span-2">
+                    <div className="text-[10px] uppercase tracking-wide text-inkfaint">Gestor responsável</div>
+                    <div className="text-sm text-ink mt-0.5">{c.gestor?.name || "—"}</div>
+                  </div>
+                </div>
+
+                {c.notes && (
+                  <div className="bg-surface2 border border-border rounded-lg px-3 py-2.5">
+                    <div className="text-[10px] uppercase tracking-wide text-inkfaint mb-1">Observações</div>
+                    <div className="text-sm text-inksoft whitespace-pre-wrap">{c.notes}</div>
+                  </div>
+                )}
+
+                <Link href={`/dashboard/clientes/${c.id}`} onClick={() => setInfoClientId(null)}
+                  className="block text-center bg-accent text-white text-sm font-medium py-2.5 rounded-lg hover:bg-accentink transition">
+                  Ver página completa do cliente
+                </Link>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
