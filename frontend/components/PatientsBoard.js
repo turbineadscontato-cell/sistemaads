@@ -143,6 +143,12 @@ export default function PatientsBoard() {
   const [activityDraft, setActivityDraft] = useState({ title: "", dueDate: "" });
   const [savingActivity, setSavingActivity] = useState(false);
   const [editingMeetLink, setEditingMeetLink] = useState(false);
+  // Visible feedback for the "Salvar alterações" button — without this, a
+  // successful save that doesn't change anything else on screen (the modal
+  // stays open, the fields already show what was just typed) can look like
+  // the button did nothing at all.
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -288,6 +294,7 @@ export default function PatientsBoard() {
     });
     setEditingMeetLink(false);
     setActivityDraft({ title: "", dueDate: "" });
+    setSavedFlash(false);
     if (!notesById[p.id]) loadNotes(p.id);
     if (!activitiesById[p.id]) loadActivities(p.id);
   }
@@ -367,8 +374,10 @@ export default function PatientsBoard() {
   }
 
   async function saveEdit(p) {
+    setSavingEdit(true);
+    setSavedFlash(false);
     try {
-      await api(`/api/patients/${p.id}`, {
+      const saved = await api(`/api/patients/${p.id}`, {
         method: "PATCH",
         body: {
           ...editForm,
@@ -382,9 +391,25 @@ export default function PatientsBoard() {
         },
       });
       setEditingMeetLink(false);
+      // Re-sync the edit form with exactly what the server saved, so the
+      // horário/pacote preview above is guaranteed to reflect the saved
+      // value even if the local state had drifted for any reason.
+      if (saved) {
+        setEditForm((f) => (f ? {
+          ...f,
+          sessionTime: saved.sessionTime || "",
+          weekdays: saved.weekdays || [],
+          packageTotalSessions: saved.packageTotalSessions ?? "",
+          packageStartDate: toDateOnly(saved.packageStartDate) || f.packageStartDate,
+        } : f));
+      }
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 2200);
       load();
     } catch (err) {
       alert(err.message);
+    } finally {
+      setSavingEdit(false);
     }
   }
 
@@ -754,9 +779,18 @@ export default function PatientsBoard() {
               </div>
 
               <div className="shrink-0 flex items-center justify-between gap-3 px-5 sm:px-7 py-4 border-t border-border bg-surface">
-                <button onClick={() => saveEdit(p)} className="bg-accent text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-accentink transition shadow-[0_6px_20px_-6px_rgba(255,122,26,0.5)]">
-                  Salvar alterações
-                </button>
+                <div className="flex items-center gap-3">
+                  <button onClick={() => saveEdit(p)} disabled={savingEdit}
+                    className="bg-accent text-white text-sm font-semibold px-5 py-2.5 rounded-xl hover:bg-accentink transition shadow-[0_6px_20px_-6px_rgba(255,122,26,0.5)] disabled:opacity-70 disabled:cursor-wait">
+                    {savingEdit ? "Salvando…" : "Salvar alterações"}
+                  </button>
+                  {savedFlash && !savingEdit && (
+                    <span className="text-[12.5px] text-success font-medium flex items-center gap-1">
+                      <svg width="14" height="14" viewBox="0 0 20 20" fill="none"><path d="M4 10.5l3.5 3.5L16 5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                      Salvo!
+                    </span>
+                  )}
+                </div>
                 <div className="flex items-center gap-4">
                   <button onClick={() => printReport(p)} className="text-[13px] text-inksoft hover:text-accent transition">Imprimir relatório</button>
                   <button onClick={() => removePatient(p)} className="text-[13px] text-danger hover:underline">Remover</button>
