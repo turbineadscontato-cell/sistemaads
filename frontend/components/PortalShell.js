@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import AvatarButton from "./AvatarButton";
 
 // Shared premium navigation shell for the client portal (/portal) and the
 // patient portal (/paciente-portal): a persistent left sidebar on desktop,
@@ -8,7 +9,7 @@ import { useEffect, useState } from "react";
 // mobile — tap the menu button to open it, pick a section, it closes and
 // you keep browsing. Replaces the old horizontal scrolling tab strip, which
 // felt cramped and boxed-in on small screens.
-export default function PortalShell({ brand, tabs, activeTab, onTabChange, userName, onLogout, children }) {
+export default function PortalShell({ brand, tabs, activeTab, onTabChange, userName, user, onAvatarSaved, onLogout, children }) {
   const [open, setOpen] = useState(false);
   const activeLabel = tabs.find((t) => t.key === activeTab)?.label || "";
 
@@ -75,10 +76,18 @@ export default function PortalShell({ brand, tabs, activeTab, onTabChange, userN
         </nav>
 
         <div className="shrink-0 border-t border-border px-4 py-4">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs text-[#d9cfc2] truncate">{userName}</span>
-            <button onClick={onLogout} className="shrink-0 text-[11px] text-[#8a8175] hover:text-accent underline">Sair</button>
-          </div>
+          {user ? (
+            <div className="flex items-center gap-2.5">
+              <AvatarButton src={user.avatarUrl} name={user.name} size={34} onSaved={onAvatarSaved} />
+              <span className="text-xs text-[#d9cfc2] truncate flex-1 min-w-0">{user.name}</span>
+              <button onClick={onLogout} className="shrink-0 text-[11px] text-[#8a8175] hover:text-accent underline">Sair</button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-[#d9cfc2] truncate">{userName}</span>
+              <button onClick={onLogout} className="shrink-0 text-[11px] text-[#8a8175] hover:text-accent underline">Sair</button>
+            </div>
+          )}
         </div>
       </aside>
 

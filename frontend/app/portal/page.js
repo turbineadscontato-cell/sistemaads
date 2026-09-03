@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, getUser, clearSession } from "../../lib/api";
+import { api, getUser, clearSession, updateStoredUser } from "../../lib/api";
 import { LOGO_SIDEBAR_SRC } from "../../lib/logo";
 import PortalShell from "../../components/PortalShell";
 import ClientFiles from "../../components/ClientFiles";
@@ -13,6 +13,7 @@ import PatientLogins from "../../components/PatientLogins";
 import ContentCalendar from "../../components/ContentCalendar";
 import ClientMarketingAI from "../../components/ClientMarketingAI";
 import BrandingSettings from "../../components/BrandingSettings";
+import { weekdayPhrase } from "../../lib/weekday";
 
 const STATUS_LABEL = { ATIVO: "Ativo", PENDENTE_PAGAMENTO: "Pendente de pagamento", ONBOARDING: "Em onboarding", CANCELADO: "Cancelado" };
 const PAYMENT_LABEL = { PAGO: "Pago", PENDENTE: "Pendente", ATRASADO: "Atrasado" };
@@ -87,6 +88,11 @@ export default function ClientPortal() {
     router.push("/");
   }
 
+  function handleAvatarSaved(avatarUrl) {
+    const merged = updateStoredUser({ avatarUrl });
+    if (merged) setUser(merged);
+  }
+
   async function requestMeeting(e) {
     e.preventDefault();
     if (!meetingForm.date || !meetingForm.time) return;
@@ -131,6 +137,8 @@ export default function ClientPortal() {
       activeTab={tab}
       onTabChange={setTab}
       userName={user.name}
+      user={user}
+      onAvatarSaved={handleAvatarSaved}
       onLogout={logout}
     >
         {tab === "geral" && (
@@ -167,7 +175,7 @@ export default function ClientPortal() {
                   </div>
                   <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">
                     <div className="text-[11px] uppercase tracking-wide text-inkfaint">Dia de otimização</div>
-                    <div className="font-display font-semibold text-base mt-1 mono text-ink">{client.optimizationDay || "—"}</div>
+                    <div className="font-display font-semibold text-base mt-1 text-ink">{weekdayPhrase(client.optimizationDay)}</div>
                   </div>
                 </>
               )}

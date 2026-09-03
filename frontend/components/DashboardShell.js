@@ -2,12 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { IconMenu, IconX, IconLogout } from "./icons";
+import AvatarButton from "./AvatarButton";
 
 const ROLE_LABEL = { SOCIO: "Sócio", GESTOR: "Gestor de tráfego", ATENDENTE: "Atendente" };
-
-function initials(name = "") {
-  return name.split(" ").map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
-}
 
 // Premium navigation shell for the internal panel (/dashboard) — sócio,
 // gestor and atendente. Mirrors the same proven pattern as PortalShell.js
@@ -15,7 +12,7 @@ function initials(name = "") {
 // for why a sticky sidebar inside a non-flex wrapper pushes the whole page
 // content off-screen) but with a more "empresa grande" executive treatment:
 // icon-led nav, a subtle brand gradient, and a role badge on the user card.
-export default function DashboardShell({ brand, items, activeTab, onTabChange, user, onLogout, topbarRight, children }) {
+export default function DashboardShell({ brand, items, activeTab, onTabChange, user, onLogout, onAvatarSaved, topbarRight, children }) {
   const [open, setOpen] = useState(false);
   const activeItem = items.find((i) => i.key === activeTab);
 
@@ -91,8 +88,8 @@ export default function DashboardShell({ brand, items, activeTab, onTabChange, u
 
         <div className="shrink-0 border-t border-white/10 px-4 py-4">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-accent to-accentink text-white text-[12px] font-bold flex items-center justify-center shrink-0 shadow-[0_4px_12px_-2px_rgba(255,122,26,0.5)]">
-              {initials(user.name)}
+            <div className="shrink-0 shadow-[0_4px_12px_-2px_rgba(255,122,26,0.5)] rounded-full">
+              <AvatarButton src={user.avatarUrl} name={user.name} size={36} onSaved={onAvatarSaved} />
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-white text-[13px] font-semibold truncate">{user.name}</div>

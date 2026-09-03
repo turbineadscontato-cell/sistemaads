@@ -17,7 +17,7 @@ export default function UsersPanel() {
   const [resetting, setResetting] = useState(null);
   const [resetPassword, setResetPassword] = useState("");
   const [editingId, setEditingId] = useState(null);
-  const [editRole, setEditRole] = useState({ role: "GESTOR", clientId: "" });
+  const [editRole, setEditRole] = useState({ role: "GESTOR", clientId: "", email: "", password: "" });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -66,7 +66,7 @@ export default function UsersPanel() {
 
   function startEditRole(u) {
     setEditingId(u.id);
-    setEditRole({ role: u.role, clientId: u.clientId || "" });
+    setEditRole({ role: u.role, clientId: u.clientId || "", email: u.email || "", password: "" });
   }
 
   async function submitEditRole(u) {
@@ -74,10 +74,19 @@ export default function UsersPanel() {
       alert("Selecione a qual cliente esse login pertence.");
       return;
     }
+    if (!editRole.email.trim()) {
+      alert("O email não pode ficar em branco.");
+      return;
+    }
     try {
       await api(`/api/users/${u.id}`, {
         method: "PATCH",
-        body: { role: editRole.role, clientId: editRole.role === "CLIENTE" ? editRole.clientId : null },
+        body: {
+          role: editRole.role,
+          clientId: editRole.role === "CLIENTE" ? editRole.clientId : null,
+          email: editRole.email.trim(),
+          ...(editRole.password.trim() ? { password: editRole.password.trim() } : {}),
+        },
       });
       setEditingId(null);
       load();
@@ -157,9 +166,13 @@ export default function UsersPanel() {
                 <tr key={u.id} className="border-t border-border align-top">
                   <td className="px-4.5 py-3">
                     <div className="flex items-center gap-2">
-                      <span className="w-6 h-6 rounded-full bg-accentsoft text-accent text-[10px] font-bold flex items-center justify-center shrink-0">
-                        {initials(u.name)}
-                      </span>
+                      {u.avatarUrl ? (
+                        <img src={u.avatarUrl} alt={u.name} className="w-6 h-6 rounded-full object-cover shrink-0" />
+                      ) : (
+                        <span className="w-6 h-6 rounded-full bg-accentsoft text-accent text-[10px] font-bold flex items-center justify-center shrink-0">
+                          {initials(u.name)}
+                        </span>
+                      )}
                       <div className="min-w-0">
                         <div className="font-medium text-ink truncate">{u.name}</div>
                         <div className="text-xs text-inkfaint truncate">{u.email}</div>
@@ -168,7 +181,7 @@ export default function UsersPanel() {
                   </td>
                   <td className="px-4.5 py-3 text-inksoft whitespace-nowrap">
                     {editingId === u.id ? (
-                      <div className="flex flex-col gap-1">
+                      <div className="flex flex-col gap-1 min-w-[180px]">
                         <select value={editRole.role} onChange={(e) => setEditRole({ ...editRole, role: e.target.value, clientId: e.target.value === "CLIENTE" ? editRole.clientId : "" })}
                           className="px-1.5 py-1 text-xs rounded-md border border-border bg-surface2 text-ink">
                           <option value="GESTOR">Gestor de tráfego</option>
@@ -183,6 +196,10 @@ export default function UsersPanel() {
                             {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                           </select>
                         )}
+                        <input type="email" value={editRole.email} onChange={(e) => setEditRole({ ...editRole, email: e.target.value })}
+                          placeholder="Email" className="px-1.5 py-1 text-xs rounded-md border border-border bg-surface2 text-ink" />
+                        <input type="text" value={editRole.password} onChange={(e) => setEditRole({ ...editRole, password: e.target.value })}
+                          placeholder="Nova senha (opcional)" className="px-1.5 py-1 text-xs rounded-md border border-border bg-surface2 text-ink" />
                         <div className="flex items-center gap-2">
                           <button onClick={() => submitEditRole(u)} className="text-[11px] text-accent font-medium hover:underline">Salvar</button>
                           <button onClick={() => setEditingId(null)} className="text-[11px] text-inkfaint hover:underline">Cancelar</button>
@@ -220,7 +237,7 @@ export default function UsersPanel() {
                           Redefinir senha
                         </button>
                         <button onClick={() => startEditRole(u)} className="text-xs text-inksoft hover:text-accent">
-                          Editar papel
+                          Editar
                         </button>
                         <button onClick={() => deleteUser(u)} className="text-xs text-danger hover:underline">
                           Excluir

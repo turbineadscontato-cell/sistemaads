@@ -16,6 +16,17 @@ export function getUser() {
   return raw ? JSON.parse(raw) : null;
 }
 
+// Mescla campos (ex: avatarUrl novo) no usuário salvo na sessão sem precisar
+// logar de novo, e devolve o objeto já atualizado pra colocar no state.
+export function updateStoredUser(patch) {
+  if (typeof window === "undefined") return null;
+  const current = getUser();
+  if (!current) return null;
+  const merged = { ...current, ...patch };
+  window.localStorage.setItem("tads_user", JSON.stringify(merged));
+  return merged;
+}
+
 export function clearSession() {
   window.localStorage.removeItem("tads_token");
   window.localStorage.removeItem("tads_user");

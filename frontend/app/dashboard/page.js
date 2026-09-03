@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { api, getUser, clearSession } from "../../lib/api";
+import { api, getUser, clearSession, updateStoredUser } from "../../lib/api";
 import { LOGO_SIDEBAR_SRC } from "../../lib/logo";
 import CRM from "../../components/CRM";
 import UsersPanel from "../../components/UsersPanel";
@@ -13,6 +13,7 @@ import TaskTitleField from "../../components/TaskTitleField";
 import Campaigns from "../../components/Campaigns";
 import DashboardShell from "../../components/DashboardShell";
 import { NAV_ICON, IconSearch, IconAlert, IconMoney, IconTrophy, IconUsers, IconTasks, IconClock, IconChevronRight, IconX, IconStar } from "../../components/icons";
+import { WEEKDAY_OPTIONS, weekdayPhrase } from "../../lib/weekday";
 
 const STATUS_LABEL = {
   ATIVO: "Ativo",
@@ -169,6 +170,11 @@ export default function Dashboard() {
     router.push("/");
   }
 
+  function handleAvatarSaved(avatarUrl) {
+    const merged = updateStoredUser({ avatarUrl });
+    if (merged) setUser(merged);
+  }
+
   async function createClient(e) {
     e.preventDefault();
     try {
@@ -232,9 +238,13 @@ export default function Dashboard() {
   const pendentesClientes = clients.filter((c) => c.status === "PENDENTE_PAGAMENTO");
   const tarefasAbertas = tasks.filter((t) => t.status !== "CONCLUIDA").length;
   const tarefasAtrasadas = tasks.filter((t) => isOverdue(t.dueDate, t.status));
-  const todayOfMonth = new Date().getDate();
+  // optimizationDay agora é o dia da semana fixo da otimização (0 = domingo
+  // … 6 = sábado, mesma convenção do Date.getDay()), não mais um número de
+  // dia do mês — por isso a checagem usa "!= null" em vez de truthy: 0
+  // (domingo) é um dia válido e não pode ser tratado como "sem dia definido".
+  const todayWeekday = new Date().getDay();
   const optimizacoesAtrasadas = clients.filter(
-    (c) => c.status === "ATIVO" && c.optimizationDay && todayOfMonth >= c.optimizationDay
+    (c) => c.status === "ATIVO" && c.optimizationDay != null && todayWeekday >= c.optimizationDay
   );
   const mrr = clients.filter((c) => c.status === "ATIVO").reduce((sum, c) => sum + (Number(c.monthlyValue) || 0), 0);
   const attentionCount = pendentesClientes.length + tarefasAtrasadas.length + optimizacoesAtrasadas.length;
@@ -310,6 +320,7 @@ export default function Dashboard() {
       onTabChange={setTab}
       user={user}
       onLogout={logout}
+      onAvatarSaved={handleAvatarSaved}
       topbarRight={<span className="text-[12px] text-inkfaint mono">{todayLabel}</span>}
     >
       {error && (
@@ -345,7 +356,7 @@ export default function Dashboard() {
                         <span className="w-7 h-7 rounded-lg bg-dangersoft text-danger flex items-center justify-center shrink-0"><IconAlert className="w-3.5 h-3.5" /></span>
                         <div className="min-w-0 flex-1">
                           <div className="text-[13px] text-ink truncate">{c.name}</div>
-                          <div className="text-[11px] text-inkfaint">Dia de otimização vencido (dia {c.optimizationDay})</div>
+                          <div className="text-[11px] text-inkfaint">Dia de otimização vencido ({weekdayPhrase(c.optimizationDay)})</div>
                         </div>
                         <IconChevronRight className="w-3.5 h-3.5 text-inkfaint shrink-0 group-hover:text-accent transition" />
                       </Link>
@@ -498,9 +509,12 @@ export default function Dashboard() {
                   </div>
                   <div>
                     <label className="block text-[11px] text-inkfaint mb-1">Dia de otimização</label>
-                    <input type="number" min="1" max="31" value={newClient.optimizationDay}
+                    <select value={newClient.optimizationDay}
                       onChange={(e) => setNewClient({ ...newClient, optimizationDay: e.target.value })}
-                      placeholder="ex: 10" className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-border bg-surface2 text-ink mono" />
+                      className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-border bg-surface2 text-ink">
+                      <option value="">Selecione</option>
+                      {WEEKDAY_OPTIONS.map((w) => <option key={w.value} value={w.value}>{w.label}</option>)}
+                    </select>
                   </div>
                   <button className="bg-accent text-white text-sm font-medium py-1.5 rounded-lg hover:bg-accentink transition self-end">Adicionar</button>
                 </form>
@@ -746,7 +760,7 @@ export default function Dashboard() {
                       </div>
                       <div className="bg-surface2 border border-border rounded-lg px-3 py-2">
                         <div className="text-[10px] uppercase tracking-wide text-inkfaint">Dia de otimização</div>
-                        <div className="text-sm text-ink mono mt-0.5">{c.optimizationDay || "—"}</div>
+                        <div className="text-sm text-ink mt-0.5">{weekdayPhrase(c.optimizationDay)}</div>
                       </div>
                       <div className="bg-surface2 border border-border rounded-lg px-3 py-2 col-span-2">
                         <div className="text-[10px] uppercase tracking-wide text-inkfaint">Criativo em veiculação</div>

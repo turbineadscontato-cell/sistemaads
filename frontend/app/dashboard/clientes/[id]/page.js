@@ -9,6 +9,7 @@ import ClientFiles from "../../../../components/ClientFiles";
 import ClientReports from "../../../../components/ClientReports";
 import ClientLeadsBoard from "../../../../components/ClientLeadsBoard";
 import ContentCalendar from "../../../../components/ContentCalendar";
+import { WEEKDAY_OPTIONS, weekdayPhrase } from "../../../../lib/weekday";
 
 const STATUS_LABEL = { ATIVO: "Ativo", PENDENTE_PAGAMENTO: "Pendente", ONBOARDING: "Onboarding", CANCELADO: "Cancelado" };
 const PAYMENT_LABEL = { PAGO: "Pago", PENDENTE: "Pendente", ATRASADO: "Atrasado" };
@@ -265,8 +266,11 @@ export default function ClientDetail() {
                 </div>
                 <div>
                   <label className="block text-[11px] text-inkfaint mb-1">Dia de otimização</label>
-                  <input type="number" min="1" max="31" value={editForm.optimizationDay} onChange={(e) => setEditForm({ ...editForm, optimizationDay: e.target.value })}
-                    className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink mono" />
+                  <select value={editForm.optimizationDay} onChange={(e) => setEditForm({ ...editForm, optimizationDay: e.target.value })}
+                    className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink">
+                    <option value="">Selecione</option>
+                    {WEEKDAY_OPTIONS.map((w) => <option key={w.value} value={w.value}>{w.label}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-[11px] text-inkfaint mb-1">Criativo ativo</label>
@@ -280,8 +284,11 @@ export default function ClientDetail() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <div>
                   <label className="block text-[11px] text-inkfaint mb-1">Dia de otimização</label>
-                  <input type="number" min="1" max="31" value={editForm.optimizationDay} onChange={(e) => setEditForm({ ...editForm, optimizationDay: e.target.value })}
-                    className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink mono" />
+                  <select value={editForm.optimizationDay} onChange={(e) => setEditForm({ ...editForm, optimizationDay: e.target.value })}
+                    className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink">
+                    <option value="">Selecione</option>
+                    {WEEKDAY_OPTIONS.map((w) => <option key={w.value} value={w.value}>{w.label}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-[11px] text-inkfaint mb-1">Criativo ativo</label>
@@ -322,7 +329,7 @@ export default function ClientDetail() {
             <>
               <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">
                 <div className="text-[11px] uppercase tracking-wide text-inkfaint">Dia de otimização</div>
-                <div className="font-display font-semibold text-base mt-1 mono text-ink">{client.optimizationDay || "—"}</div>
+                <div className="font-display font-semibold text-base mt-1 text-ink">{weekdayPhrase(client.optimizationDay)}</div>
               </div>
               <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">
                 <div className="text-[11px] uppercase tracking-wide text-inkfaint">Criativo ativo</div>

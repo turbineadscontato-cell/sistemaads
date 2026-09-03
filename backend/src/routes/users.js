@@ -25,7 +25,7 @@ router.get("/", requireRole("SOCIO"), async (req, res) => {
   // from their own portal (see /api/patients/:id/portal-user), not here.
   const users = await prisma.user.findMany({
     where: { role: { not: "PACIENTE" } },
-    select: { id: true, name: true, email: true, role: true, active: true, createdAt: true, clientId: true, client: { select: { name: true } } },
+    select: { id: true, name: true, email: true, role: true, active: true, createdAt: true, clientId: true, client: { select: { name: true } }, avatarUrl: true },
     orderBy: { name: "asc" },
   });
   res.json(users);
@@ -56,9 +56,10 @@ router.post("/", requireRole("SOCIO"), async (req, res) => {
 });
 
 router.patch("/:id", requireRole("SOCIO"), async (req, res) => {
-  const { name, role, active, password, clientId } = req.body || {};
+  const { name, email, role, active, password, clientId } = req.body || {};
   const data = {
     ...(name !== undefined && { name }),
+    ...(email !== undefined && email !== "" && { email: email.toLowerCase().trim() }),
     ...(role !== undefined && { role }),
     ...(active !== undefined && { active }),
     ...(clientId !== undefined && { clientId: clientId || null }),
@@ -73,6 +74,7 @@ router.patch("/:id", requireRole("SOCIO"), async (req, res) => {
     });
     res.json(user);
   } catch (err) {
+    if (err.code === "P2002") return res.status(409).json({ error: "Já existe um usuário com esse email." });
     res.status(404).json({ error: "Usuário não encontrado." });
   }
 });

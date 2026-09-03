@@ -56,6 +56,9 @@ model User {
   role         Role
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())
+  // Foto de perfil de cada login (base64 data URL, já redimensionada no
+  // navegador antes do envio) — cada usuário troca a própria.
+  avatarUrl    String?
 
   clients        Client[]  @relation("GestorClients")
   tasks          Task[]    @relation("GestorTasks")
@@ -83,7 +86,7 @@ model Client {
   dailyAdBudget  Float?
   startDate      DateTime?
   notes          String?
-  optimizationDay   Int?     // day of month (1-31) the account should be optimized
+  optimizationDay   Int?     // weekday the account should be optimized every week (0 = domingo … 6 = sábado, same convention as JS Date.getDay())
   activeCreative    String?  // short label for whichever creative is currently live
   createdAt      DateTime     @default(now())
 
