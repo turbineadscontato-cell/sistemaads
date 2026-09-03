@@ -50,6 +50,20 @@ function fmtWeekday(d) {
   const label = new Date(d).toLocaleDateString("pt-BR", { weekday: "short" });
   return label.charAt(0).toUpperCase() + label.slice(1).replace(".", "");
 }
+// UTC-forced variants for the computed session-package dates (see
+// backend/src/utils/sessionSchedule.js) — those are stored as UTC-midnight
+// "calendar dates", so formatting them without forcing UTC here would let
+// the viewer's own browser timezone shift the displayed weekday/date away
+// from what the professional actually configured.
+function fmtScheduleWeekday(d) {
+  if (!d) return "";
+  const label = new Date(d).toLocaleDateString("pt-BR", { weekday: "short", timeZone: "UTC" });
+  return label.charAt(0).toUpperCase() + label.slice(1).replace(".", "");
+}
+function fmtScheduleDateTime(d) {
+  if (!d) return "";
+  return new Date(d).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
+}
 
 export default function PatientPortal() {
   const router = useRouter();
@@ -237,7 +251,7 @@ export default function PatientPortal() {
                     return (
                       <div key={d} className={`flex items-center justify-between text-sm gap-2 ${past ? "text-inkfaint line-through" : "text-ink"}`}>
                         <span>Sessão {i + 1}</span>
-                        <span className="mono text-[13px]">{fmtWeekday(d)}, {fmtDateTime(d)}</span>
+                        <span className="mono text-[13px]">{fmtScheduleWeekday(d)}, {fmtScheduleDateTime(d)}</span>
                       </div>
                     );
                   })}

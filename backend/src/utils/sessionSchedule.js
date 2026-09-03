@@ -8,6 +8,19 @@
 // "how often he attends" as a single source of truth instead of two fields
 // that could disagree with each other.
 //
+// Everything below deliberately uses the UTC getters/setters (getUTCDay,
+// setUTCHours, setUTCDate — never the local-time getDay/setHours/setDate).
+// packageStartDate comes from a plain "YYYY-MM-DD" <input type="date">,
+// which the JS Date parser always reads as UTC midnight for that calendar
+// date. If this function used local-time methods instead, the calendar date
+// (and therefore the weekday) would silently shift by a day whenever the
+// server process's local timezone isn't UTC+0 — e.g. a professional picking
+// "segunda" would get sessions computed one day into "domingo" on a server
+// running a few hours behind UTC. Staying in UTC throughout keeps the
+// calendar date exactly what was typed, regardless of where this runs.
+// (The frontend mirrors this — it formats these dates with timeZone: "UTC"
+// too, so what's displayed always matches what was configured.)
+//
 // Walks forward day-by-day from packageStartDate (or the patient's createdAt
 // if that wasn't set) picking dates that fall on one of the marked weekdays,
 // until it has `packageTotalSessions` of them.
@@ -20,7 +33,7 @@ function computeSessionSchedule(patient) {
   if (!start) return null;
 
   const cursor = new Date(start);
-  cursor.setHours(0, 0, 0, 0);
+  cursor.setUTCHours(0, 0, 0, 0);
 
   let hours = null;
   let minutes = 0;
@@ -36,12 +49,12 @@ function computeSessionSchedule(patient) {
   // 3650 days (~10 years) is far more than enough headroom for any real
   // package while still guaranteeing the loop terminates.
   while (dates.length < total && guard < 3650) {
-    if (marked.has(cursor.getDay())) {
+    if (marked.has(cursor.getUTCDay())) {
       const d = new Date(cursor);
-      if (hours != null) d.setHours(hours, minutes, 0, 0);
+      if (hours != null) d.setUTCHours(hours, minutes, 0, 0);
       dates.push(d.toISOString());
     }
-    cursor.setDate(cursor.getDate() + 1);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
     guard++;
   }
 

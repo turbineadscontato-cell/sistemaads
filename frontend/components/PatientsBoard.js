@@ -50,16 +50,33 @@ function toDateTimeLocal(d) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
 }
+// Package-schedule dates are computed and stored as UTC-midnight-based
+// "calendar dates" (see backend/src/utils/sessionSchedule.js) — reading them
+// back with getFullYear/getMonth/getDate (local time) would shift the date
+// by a day whenever the browser's timezone isn't UTC+0. UTC getters/setters
+// keep it exactly the calendar date that was typed in, everywhere.
 function toDateOnly(d) {
   if (!d) return "";
   const dt = new Date(d);
   const pad = (n) => String(n).padStart(2, "0");
-  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+  return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`;
 }
 function fmtWeekday(d) {
   if (!d) return "";
   const label = new Date(d).toLocaleDateString("pt-BR", { weekday: "short" });
   return label.charAt(0).toUpperCase() + label.slice(1).replace(".", "");
+}
+// UTC-forced variants used specifically for the computed session-package
+// dates below, so what's shown always matches what was configured, instead
+// of being reinterpreted in whatever timezone the viewer's browser is in.
+function fmtScheduleWeekday(d) {
+  if (!d) return "";
+  const label = new Date(d).toLocaleDateString("pt-BR", { weekday: "short", timeZone: "UTC" });
+  return label.charAt(0).toUpperCase() + label.slice(1).replace(".", "");
+}
+function fmtScheduleDateTime(d) {
+  if (!d) return "";
+  return new Date(d).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
 }
 
 const EMPTY_FORM = { name: "", contact: "", sessionValue: "", paymentDueDay: "", paymentStatus: "EM_DIA", nextSessionAt: "", notes: "", weekdays: [], sessionTime: "" };
@@ -543,7 +560,7 @@ export default function PatientsBoard() {
                                   {p.sessionSchedule.dates.map((d, i) => (
                                     <div key={d} className={`flex items-center justify-between text-[10px] ${new Date(d) < new Date() ? "text-inkfaint line-through" : "text-ink"}`}>
                                       <span>Sessão {i + 1}</span>
-                                      <span className="mono">{fmtWeekday(d)}, {fmtDateTime(d)}</span>
+                                      <span className="mono">{fmtScheduleWeekday(d)}, {fmtScheduleDateTime(d)}</span>
                                     </div>
                                   ))}
                                 </div>
