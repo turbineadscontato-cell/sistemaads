@@ -12,6 +12,8 @@ import AIAssistants from "../../components/AIAssistants";
 import TaskTitleField from "../../components/TaskTitleField";
 import Campaigns from "../../components/Campaigns";
 import DashboardShell from "../../components/DashboardShell";
+import Celebration from "../../components/Celebration";
+import RankBadge from "../../components/RankBadge";
 import { NAV_ICON, IconSearch, IconAlert, IconMoney, IconTrophy, IconUsers, IconTasks, IconClock, IconChevronRight, IconX, IconStar } from "../../components/icons";
 import { WEEKDAY_OPTIONS, weekdayPhrase } from "../../lib/weekday";
 
@@ -29,7 +31,9 @@ function initials(name = "") {
 
 function fmtDate(d) {
   if (!d) return "—";
-  return new Date(d).toLocaleDateString("pt-BR");
+  // "YYYY-MM-DD" de <input type="date"> sempre vira meia-noite UTC — sem
+  // forçar timeZone: "UTC" aqui, exibir em fuso -3 mostra o dia anterior.
+  return new Date(d).toLocaleDateString("pt-BR", { timeZone: "UTC" });
 }
 
 function currency(n) {
@@ -40,10 +44,22 @@ function currency(n) {
 function isOverdue(dueDate, status) {
   if (!dueDate || status === "CONCLUIDA") return false;
   const d = new Date(dueDate);
-  d.setHours(0, 0, 0, 0);
+  d.setUTCHours(0, 0, 0, 0);
   const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  today.setUTCHours(0, 0, 0, 0);
   return d < today;
+}
+
+// nextOptimizationDate vence no dia marcado (hoje ou antes) — nunca fica
+// "vencido" por dias a mais só porque ninguém marcou como feita ainda numa
+// semana diferente, como o cálculo antigo baseado em dia-da-semana fazia.
+function isOptimizationDue(nextOptimizationDate) {
+  if (!nextOptimizationDate) return false;
+  const d = new Date(nextOptimizationDate);
+  d.setUTCHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  return d <= today;
 }
 
 // Bolinha de prazo (verde/amarela/vermelha) pedida pelo usuário — separada
@@ -54,9 +70,9 @@ function isOverdue(dueDate, status) {
 function taskUrgencyTone(dueDate, status) {
   if (status === "CONCLUIDA" || !dueDate) return "success";
   const d = new Date(dueDate);
-  d.setHours(0, 0, 0, 0);
+  d.setUTCHours(0, 0, 0, 0);
   const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  today.setUTCHours(0, 0, 0, 0);
   const diffDays = Math.round((d - today) / 86400000);
   if (diffDays < 0) return "danger";
   if (diffDays <= 3) return "warning";
@@ -103,6 +119,7 @@ export default function Dashboard() {
   const [gestores, setGestores] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [celebrating, setCelebrating] = useState(null);
 
   const [newClient, setNewClient] = useState({ name: "", niche: "", plan: "", monthlyValue: "", gestorId: "", optimizationDay: "" });
   const [newTask, setNewTask] = useState({ title: "", clientId: "", gestorId: "", priority: "MEDIA", dueDate: "" });
@@ -175,6 +192,18 @@ export default function Dashboard() {
     if (merged) setUser(merged);
   }
 
+  // Marca a otimização desta semana como feita: registra lastOptimizedAt
+  // (visível pra gente e pro cliente) e empurra nextOptimizationDate +7 dias
+  // automaticamente — sem precisar mexer no dia da semana configurado.
+  async function markOptimized(c) {
+    try {
+      await api(`/api/clients/${c.id}`, { method: "PATCH", body: { markOptimized: true } });
+      loadAll();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
   async function createClient(e) {
     e.preventDefault();
     try {
@@ -209,6 +238,10 @@ export default function Dashboard() {
   async function toggleTaskStatus(task) {
     const next = task.status === "CONCLUIDA" ? "PENDENTE" : "CONCLUIDA";
     await api(`/api/tasks/${task.id}`, { method: "PATCH", body: { status: next } });
+    if (next === "CONCLUIDA") {
+      setCelebrating(task.title);
+      setTimeout(() => setCelebrating(null), 2600);
+    }
     loadAll();
   }
 
@@ -238,14 +271,11 @@ export default function Dashboard() {
   const pendentesClientes = clients.filter((c) => c.status === "PENDENTE_PAGAMENTO");
   const tarefasAbertas = tasks.filter((t) => t.status !== "CONCLUIDA").length;
   const tarefasAtrasadas = tasks.filter((t) => isOverdue(t.dueDate, t.status));
-  // optimizationDay agora é o dia da semana fixo da otimização (0 = domingo
-  // … 6 = sábado, mesma convenção do Date.getDay()), não mais um número de
-  // dia do mês — por isso a checagem usa "!= null" em vez de truthy: 0
-  // (domingo) é um dia válido e não pode ser tratado como "sem dia definido".
-  const todayWeekday = new Date().getDay();
-  const optimizacoesAtrasadas = clients.filter(
-    (c) => c.status === "ATIVO" && c.optimizationDay != null && todayWeekday >= c.optimizationDay
-  );
+  // nextOptimizationDate é uma data concreta (não mais "todo dia X da
+  // semana, então fica vencido a semana toda depois que passa"): vence
+  // exatamente no dia marcado e some da lista assim que alguém clica em
+  // "Marcar como feita" (isso empurra a data +7 dias automaticamente).
+  const optimizacoesAtrasadas = clients.filter((c) => c.status === "ATIVO" && isOptimizationDue(c.nextOptimizationDate));
   const mrr = clients.filter((c) => c.status === "ATIVO").reduce((sum, c) => sum + (Number(c.monthlyValue) || 0), 0);
   const attentionCount = pendentesClientes.length + tarefasAtrasadas.length + optimizacoesAtrasadas.length;
 
@@ -313,6 +343,8 @@ export default function Dashboard() {
   const todayLabel = capitalize(new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" }));
 
   return (
+    <>
+    <Celebration show={!!celebrating} text={celebrating ? `"${celebrating}" concluída!` : ""} />
     <DashboardShell
       brand={<img src={LOGO_SIDEBAR_SRC} alt="TurbinaADS" className="h-8 w-auto" />}
       items={NAV_ITEMS}
@@ -351,15 +383,21 @@ export default function Dashboard() {
                 ) : (
                   <div className="divide-y divide-border max-h-64 overflow-y-auto">
                     {optimizacoesAtrasadas.map((c) => (
-                      <Link key={`opt-${c.id}`} href={`/dashboard/clientes/${c.id}`}
-                        className="flex items-center gap-3 px-4.5 py-2.5 hover:bg-surface2/60 transition group">
-                        <span className="w-7 h-7 rounded-lg bg-dangersoft text-danger flex items-center justify-center shrink-0"><IconAlert className="w-3.5 h-3.5" /></span>
-                        <div className="min-w-0 flex-1">
+                      <div key={`opt-${c.id}`} className="flex items-center gap-3 px-4.5 py-2.5 hover:bg-surface2/60 transition group">
+                        <Link href={`/dashboard/clientes/${c.id}`} className="shrink-0">
+                          <span className="w-7 h-7 rounded-lg bg-dangersoft text-danger flex items-center justify-center"><IconAlert className="w-3.5 h-3.5" /></span>
+                        </Link>
+                        <Link href={`/dashboard/clientes/${c.id}`} className="min-w-0 flex-1">
                           <div className="text-[13px] text-ink truncate">{c.name}</div>
-                          <div className="text-[11px] text-inkfaint">Dia de otimização vencido ({weekdayPhrase(c.optimizationDay)})</div>
-                        </div>
-                        <IconChevronRight className="w-3.5 h-3.5 text-inkfaint shrink-0 group-hover:text-accent transition" />
-                      </Link>
+                          <div className="text-[11px] text-inkfaint">Otimização vencida · {fmtDate(c.nextOptimizationDate)} ({weekdayPhrase(c.optimizationDay)})</div>
+                        </Link>
+                        <button
+                          onClick={(e) => { e.preventDefault(); markOptimized(c); }}
+                          className="shrink-0 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg bg-successsoft text-success hover:brightness-95 transition"
+                        >
+                          Marcar feita
+                        </button>
+                      </div>
                     ))}
                     {pendentesClientes.map((c) => (
                       <Link key={`pag-${c.id}`} href={`/dashboard/clientes/${c.id}`}
@@ -399,6 +437,7 @@ export default function Dashboard() {
                         <div className="flex items-center gap-2.5">
                           <span className="w-6 h-6 rounded-full bg-accentsoft text-accent text-[10px] font-bold flex items-center justify-center shrink-0">{initials(g.name)}</span>
                           <span className="text-[13px] text-ink font-medium truncate">{g.name}{g.id === user.id ? " (você)" : ""}</span>
+                          <RankBadge rank={g.rank} size="sm" />
                           <span className="ml-auto text-[11px] text-inkfaint mono shrink-0">{g.clientCount} cliente{g.clientCount === 1 ? "" : "s"}</span>
                         </div>
                         {g.pct != null && (
@@ -762,6 +801,24 @@ export default function Dashboard() {
                         <div className="text-[10px] uppercase tracking-wide text-inkfaint">Dia de otimização</div>
                         <div className="text-sm text-ink mt-0.5">{weekdayPhrase(c.optimizationDay)}</div>
                       </div>
+                      <div className="bg-surface2 border border-border rounded-lg px-3 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-inkfaint">Próxima otimização</div>
+                        <div className={`text-sm mt-0.5 ${isOptimizationDue(c.nextOptimizationDate) ? "text-danger font-semibold" : "text-ink"}`}>{fmtDate(c.nextOptimizationDate)}</div>
+                      </div>
+                      <div className="bg-surface2 border border-border rounded-lg px-3 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-inkfaint">Última otimização</div>
+                        <div className="text-sm text-ink mt-0.5">{c.lastOptimizedAt ? fmtDate(c.lastOptimizedAt) : "—"}</div>
+                      </div>
+                      {c.optimizationDay != null && (
+                        <div className="col-span-2">
+                          <button
+                            onClick={() => markOptimized(c)}
+                            className="w-full text-[12.5px] font-semibold px-3 py-2 rounded-lg bg-successsoft text-success hover:brightness-95 transition"
+                          >
+                            ✓ Marcar otimização desta semana como feita
+                          </button>
+                        </div>
+                      )}
                       <div className="bg-surface2 border border-border rounded-lg px-3 py-2 col-span-2">
                         <div className="text-[10px] uppercase tracking-wide text-inkfaint">Criativo em veiculação</div>
                         <div className="text-sm text-ink mt-0.5 truncate">{c.activeCreative || "—"}</div>
@@ -799,5 +856,6 @@ export default function Dashboard() {
         );
       })()}
     </DashboardShell>
+    </>
   );
 }

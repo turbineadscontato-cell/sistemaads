@@ -69,12 +69,11 @@ router.patch("/:id", requireRole("SOCIO", "GESTOR"), async (req, res) => {
   res.json(task);
 });
 
-router.delete("/:id", requireRole("SOCIO", "GESTOR"), async (req, res) => {
+// Excluir tarefa é ação só do sócio (dono) — gestores podem criar, editar e
+// concluir, mas não apagar histórico de tarefas.
+router.delete("/:id", requireRole("SOCIO"), async (req, res) => {
   const existing = await prisma.task.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: "Tarefa não encontrada." });
-  if (req.user.role === "GESTOR" && existing.gestorId !== req.user.id) {
-    return res.status(403).json({ error: "Você não tem acesso a essa tarefa." });
-  }
   await prisma.task.delete({ where: { id: req.params.id } });
   res.status(204).end();
 });

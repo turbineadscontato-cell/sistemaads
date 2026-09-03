@@ -1,6 +1,20 @@
 const express = require("express");
 const prisma = require("../prisma");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { nextOccurrence, advanceAfterOptimizing } = require("../utils/optimizationSchedule");
+const { addBusinessDays } = require("../utils/businessDays");
+
+// Checklist padrão de onboarding — criado automaticamente pra todo cliente
+// novo no plano COMPLETO (tráfego pago), com prazo em dias úteis contados a
+// partir da data de contratação (criação do cliente no sistema).
+const ONBOARDING_TASKS = [
+  { title: "Configuração de conta de anúncio (Meta/Google)", businessDays: 1, priority: "ALTA" },
+  { title: "Criação de criativo", businessDays: 2, priority: "ALTA" },
+  { title: "Criação do site/landing page", businessDays: 3, priority: "MEDIA" },
+  { title: "Reunião no WhatsApp (verba, público, interesses, lista de clientes)", businessDays: 4, priority: "MEDIA" },
+  { title: "Subir campanha", businessDays: 7, priority: "ALTA" },
+  { title: "Primeira otimização de campanha", businessDays: 14, priority: "MEDIA" },
+];
 
 const router = express.Router();
 router.use(requireAuth);
@@ -69,6 +83,7 @@ router.post("/", requireRole("SOCIO"), async (req, res) => {
   const { name, niche, status, plan, monthlyValue, dailyAdBudget, startDate, gestorId, notes, optimizationDay, activeCreative, planType } = req.body || {};
   if (!name) return res.status(400).json({ error: "Nome do cliente é obrigatório." });
 
+  const optDay = optimizationDay != null && optimizationDay !== "" ? Number(optimizationDay) : null;
   const client = await prisma.client.create({
     data: {
       name,
@@ -80,11 +95,32 @@ router.post("/", requireRole("SOCIO"), async (req, res) => {
       startDate: startDate ? new Date(startDate) : null,
       gestorId: gestorId || null,
       notes: notes || null,
-      optimizationDay: optimizationDay != null && optimizationDay !== "" ? Number(optimizationDay) : null,
+      optimizationDay: optDay,
+      // Seed the first "próxima otimização" right away so the alert/board
+      // has something concrete to show from day one, instead of waiting for
+      // someone to mark one as feita first.
+      nextOptimizationDate: optDay != null ? nextOccurrence(optDay, new Date()) : null,
       activeCreative: activeCreative || null,
       planType: planType === "SO_SISTEMA" ? "SO_SISTEMA" : "COMPLETO",
     },
   });
+
+  // Checklist automático de onboarding — só faz sentido pra quem contratou
+  // tráfego pago (conta de anúncio, criativo, campanha...). Cliente só
+  // sistema não tem esses passos.
+  if (client.planType !== "SO_SISTEMA") {
+    const createdAt = client.createdAt;
+    await prisma.task.createMany({
+      data: ONBOARDING_TASKS.map((t) => ({
+        title: t.title,
+        priority: t.priority,
+        dueDate: addBusinessDays(createdAt, t.businessDays),
+        clientId: client.id,
+        gestorId: client.gestorId || null,
+      })),
+    });
+  }
+
   res.status(201).json(client);
 });
 
@@ -109,26 +145,50 @@ router.patch("/me/branding", requireRole("CLIENTE"), async (req, res) => {
   res.json(client);
 });
 
+// Shared by both branches of PATCH /:id below: builds the
+// nextOptimizationDate/lastOptimizedAt part of the update. `existing` is the
+// client row before this update (needed either way: to recompute the next
+// date off the OLD optimizationDay when it's changing, or to advance off the
+// current nextOptimizationDate when marking today's otimização done).
+function optimizationPatch(existing, { optimizationDay, markOptimized }) {
+  const data = {};
+  const dayChanging = optimizationDay !== undefined
+    && (optimizationDay != null && optimizationDay !== "" ? Number(optimizationDay) : null) !== existing.optimizationDay;
+  if (dayChanging) {
+    const newDay = optimizationDay != null && optimizationDay !== "" ? Number(optimizationDay) : null;
+    data.nextOptimizationDate = newDay != null ? nextOccurrence(newDay, new Date()) : null;
+  }
+  if (markOptimized) {
+    data.nextOptimizationDate = advanceAfterOptimizing(existing);
+    data.lastOptimizedAt = new Date();
+  }
+  return data;
+}
+
 router.patch("/:id", requireRole("SOCIO", "GESTOR"), async (req, res) => {
   // A gestor may only touch their own clients, and only a limited field set:
-  // day-to-day notes plus the two fields they're responsible for operationally.
+  // day-to-day notes plus the fields they're responsible for operationally
+  // (including marking the weekly otimização as feita — it's their job).
   if (req.user.role === "GESTOR") {
     const owned = await prisma.client.findFirst({ where: { id: req.params.id, gestorId: req.user.id } });
     if (!owned) return res.status(403).json({ error: "Você não tem acesso a esse cliente." });
-    const { notes, optimizationDay, activeCreative } = req.body || {};
+    const { notes, optimizationDay, activeCreative, markOptimized } = req.body || {};
     const client = await prisma.client.update({
       where: { id: req.params.id },
       data: {
         ...(notes !== undefined && { notes }),
         ...(optimizationDay !== undefined && { optimizationDay: optimizationDay != null && optimizationDay !== "" ? Number(optimizationDay) : null }),
         ...(activeCreative !== undefined && { activeCreative: activeCreative || null }),
+        ...optimizationPatch(owned, { optimizationDay, markOptimized }),
       },
     });
     return res.json(client);
   }
 
-  const { name, niche, status, plan, monthlyValue, dailyAdBudget, startDate, gestorId, notes, optimizationDay, activeCreative, planType } = req.body || {};
+  const { name, niche, status, plan, monthlyValue, dailyAdBudget, startDate, gestorId, notes, optimizationDay, activeCreative, planType, markOptimized } = req.body || {};
   try {
+    const existing = await prisma.client.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: "Cliente não encontrado." });
     const client = await prisma.client.update({
       where: { id: req.params.id },
       data: {
@@ -144,6 +204,7 @@ router.patch("/:id", requireRole("SOCIO", "GESTOR"), async (req, res) => {
         ...(optimizationDay !== undefined && { optimizationDay: optimizationDay != null && optimizationDay !== "" ? Number(optimizationDay) : null }),
         ...(activeCreative !== undefined && { activeCreative: activeCreative || null }),
         ...(planType !== undefined && { planType: planType === "SO_SISTEMA" ? "SO_SISTEMA" : "COMPLETO" }),
+        ...optimizationPatch(existing, { optimizationDay, markOptimized }),
       },
     });
     res.json(client);
@@ -154,6 +215,11 @@ router.patch("/:id", requireRole("SOCIO", "GESTOR"), async (req, res) => {
 
 router.delete("/:id", requireRole("SOCIO"), async (req, res) => {
   try {
+    // Apaga também o login do portal desse cliente (role CLIENTE vinculado a
+    // ele) — senão sobra uma conta órfã sem nenhum cliente pra acessar.
+    // Pagamentos, tarefas, pendências, leads, pacientes etc. já cascateiam
+    // pelo schema (onDelete: Cascade).
+    await prisma.user.deleteMany({ where: { clientId: req.params.id } });
     await prisma.client.delete({ where: { id: req.params.id } });
     res.status(204).end();
   } catch (err) {

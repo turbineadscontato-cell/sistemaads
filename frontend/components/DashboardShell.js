@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { IconMenu, IconX, IconLogout } from "./icons";
 import AvatarButton from "./AvatarButton";
+import RankBadge from "./RankBadge";
 
 const ROLE_LABEL = { SOCIO: "Sócio", GESTOR: "Gestor de tráfego", ATENDENTE: "Atendente" };
 
@@ -94,6 +95,9 @@ export default function DashboardShell({ brand, items, activeTab, onTabChange, u
             <div className="min-w-0 flex-1">
               <div className="text-white text-[13px] font-semibold truncate">{user.name}</div>
               <div className="text-[10.5px] text-[#8a8175] truncate">{ROLE_LABEL[user.role] || user.role}</div>
+              {(user.role === "GESTOR" || user.role === "ATENDENTE" || user.role === "SOCIO") && (
+                <div className="mt-1"><RankBadge rank={user.rank} size="sm" /></div>
+              )}
             </div>
             <button onClick={onLogout} aria-label="Sair" title="Sair"
               className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-[#8a8175] hover:text-accent hover:bg-white/5 transition">

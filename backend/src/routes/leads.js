@@ -25,7 +25,7 @@ router.post("/", async (req, res) => {
 });
 
 router.patch("/:id", async (req, res) => {
-  const { name, contact, origin, status } = req.body || {};
+  const { name, contact, origin, status, notes } = req.body || {};
   try {
     const lead = await prisma.lead.update({
       where: { id: req.params.id },
@@ -34,9 +34,20 @@ router.patch("/:id", async (req, res) => {
         ...(contact !== undefined && { contact }),
         ...(origin !== undefined && { origin }),
         ...(status !== undefined && { status }),
+        ...(notes !== undefined && { notes }),
       },
     });
     res.json(lead);
+  } catch (err) {
+    res.status(404).json({ error: "Lead não encontrado." });
+  }
+});
+
+// Excluir lead — sócio e atendente (mesmo time que administra o funil).
+router.delete("/:id", async (req, res) => {
+  try {
+    await prisma.lead.delete({ where: { id: req.params.id } });
+    res.status(204).end();
   } catch (err) {
     res.status(404).json({ error: "Lead não encontrado." });
   }

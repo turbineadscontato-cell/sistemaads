@@ -9,6 +9,7 @@ import ClientFiles from "../../../../components/ClientFiles";
 import ClientReports from "../../../../components/ClientReports";
 import ClientLeadsBoard from "../../../../components/ClientLeadsBoard";
 import ContentCalendar from "../../../../components/ContentCalendar";
+import Celebration from "../../../../components/Celebration";
 import { WEEKDAY_OPTIONS, weekdayPhrase } from "../../../../lib/weekday";
 
 const STATUS_LABEL = { ATIVO: "Ativo", PENDENTE_PAGAMENTO: "Pendente", ONBOARDING: "Onboarding", CANCELADO: "Cancelado" };
@@ -16,7 +17,12 @@ const PAYMENT_LABEL = { PAGO: "Pago", PENDENTE: "Pendente", ATRASADO: "Atrasado"
 
 function fmtDate(d) {
   if (!d) return "—";
-  return new Date(d).toLocaleDateString("pt-BR");
+  // Datas vindas de <input type="date"> (vencimento de pagamento, prazo de
+  // tarefa) são "YYYY-MM-DD" — o Date parser sempre lê isso como meia-noite
+  // UTC. Sem forçar timeZone: "UTC" aqui, exibir em fuso -3 (Brasil) mostra
+  // o dia anterior (ex: 03/09 vira 02/09). Mesmo padrão já usado em
+  // sessionSchedule.js / PatientsBoard.js.
+  return new Date(d).toLocaleDateString("pt-BR", { timeZone: "UTC" });
 }
 function currency(n) {
   if (n == null) return "—";
@@ -25,10 +31,18 @@ function currency(n) {
 function isOverdue(dueDate, status) {
   if (!dueDate || status === "CONCLUIDA") return false;
   const d = new Date(dueDate);
-  d.setHours(0, 0, 0, 0);
+  d.setUTCHours(0, 0, 0, 0);
   const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  today.setUTCHours(0, 0, 0, 0);
   return d < today;
+}
+function isOptimizationDue(nextOptimizationDate) {
+  if (!nextOptimizationDate) return false;
+  const d = new Date(nextOptimizationDate);
+  d.setUTCHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  return d <= today;
 }
 
 export default function ClientDetail() {
@@ -48,6 +62,7 @@ export default function ClientDetail() {
   const [newPayment, setNewPayment] = useState({ amount: "", dueDate: "" });
   const [newPendency, setNewPendency] = useState({ description: "", type: "" });
   const [newTask, setNewTask] = useState({ title: "", dueDate: "", priority: "MEDIA" });
+  const [celebrating, setCelebrating] = useState(null);
 
   useEffect(() => {
     const u = getUser();
@@ -126,6 +141,30 @@ export default function ClientDetail() {
     }
   }
 
+  async function deleteClient() {
+    if (!confirm(`Excluir permanentemente "${client.name}"? Isso apaga TODOS os dados dele (pagamentos, tarefas, pacientes, arquivos, login do portal etc.) e não pode ser desfeito.`)) return;
+    if (!confirm("Tem certeza mesmo? Essa ação é definitiva.")) return;
+    try {
+      await api(`/api/clients/${id}`, { method: "DELETE" });
+      router.push("/dashboard");
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  const [markingOptimized, setMarkingOptimized] = useState(false);
+  async function markOptimized() {
+    setMarkingOptimized(true);
+    try {
+      await api(`/api/clients/${id}`, { method: "PATCH", body: { markOptimized: true } });
+      load();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setMarkingOptimized(false);
+    }
+  }
+
   async function addPayment(e) {
     e.preventDefault();
     try {
@@ -164,8 +203,24 @@ export default function ClientDetail() {
   }
 
   async function toggleTask(t) {
-    await api(`/api/tasks/${t.id}`, { method: "PATCH", body: { status: t.status === "CONCLUIDA" ? "PENDENTE" : "CONCLUIDA" } });
+    const marking = t.status !== "CONCLUIDA";
+    await api(`/api/tasks/${t.id}`, { method: "PATCH", body: { status: marking ? "CONCLUIDA" : "PENDENTE" } });
+    if (marking) {
+      setCelebrating(t.title);
+      setTimeout(() => setCelebrating(null), 2600);
+    }
     load();
+  }
+
+  // Excluir tarefa é restrito ao sócio (o backend também recusa pra gestor).
+  async function deleteTask(t) {
+    if (!confirm(`Excluir a tarefa "${t.title}"?`)) return;
+    try {
+      await api(`/api/tasks/${t.id}`, { method: "DELETE" });
+      load();
+    } catch (err) {
+      alert(err.message);
+    }
   }
 
   if (error) {
@@ -187,6 +242,7 @@ export default function ClientDetail() {
 
   return (
     <div className="min-h-screen bg-bg">
+      <Celebration show={!!celebrating} text={celebrating ? `"${celebrating}" concluída!` : ""} />
       <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
         <Link href="/dashboard" className="text-xs text-inkfaint hover:text-accent">← Voltar aos clientes</Link>
 
@@ -201,11 +257,18 @@ export default function ClientDetail() {
               )}
             </div>
           </div>
-          {canOperate && !editing && (
-            <button onClick={startEdit} className="text-xs border border-border rounded-md px-3 py-1.5 text-inksoft hover:border-accent hover:text-accent transition shrink-0">
-              Editar cliente
-            </button>
-          )}
+          <div className="flex items-center gap-2 shrink-0">
+            {canOperate && !editing && (
+              <button onClick={startEdit} className="text-xs border border-border rounded-md px-3 py-1.5 text-inksoft hover:border-accent hover:text-accent transition">
+                Editar cliente
+              </button>
+            )}
+            {canEdit && (
+              <button onClick={deleteClient} className="text-xs border border-danger/30 rounded-md px-3 py-1.5 text-danger hover:bg-dangersoft transition">
+                Excluir cliente
+              </button>
+            )}
+          </div>
         </div>
 
         {editing && editForm && (
@@ -339,6 +402,29 @@ export default function ClientDetail() {
           )}
         </div>
 
+        {!isSoSistema && client.optimizationDay != null && (
+          <div className="bg-surface border border-border rounded-xl p-4 shadow-sm flex flex-wrap items-center gap-4 justify-between">
+            <div className="flex flex-wrap gap-6">
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-inkfaint">Próxima otimização</div>
+                <div className={`font-display font-semibold text-base mt-1 ${isOptimizationDue(client.nextOptimizationDate) ? "text-danger" : "text-ink"}`}>
+                  {fmtDate(client.nextOptimizationDate)}{isOptimizationDue(client.nextOptimizationDate) ? " · vencida" : ""}
+                </div>
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-inkfaint">Última otimização feita</div>
+                <div className="font-display font-semibold text-base mt-1 text-ink">{client.lastOptimizedAt ? fmtDate(client.lastOptimizedAt) : "Ainda não registrada"}</div>
+              </div>
+            </div>
+            {canOperate && (
+              <button onClick={markOptimized} disabled={markingOptimized}
+                className="text-xs font-semibold px-3.5 py-2 rounded-lg bg-successsoft text-success hover:brightness-95 transition disabled:opacity-60">
+                {markingOptimized ? "Salvando…" : "✓ Marcar otimização como feita"}
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* Payments */}
           <div className="bg-surface border border-border rounded-xl shadow-sm overflow-hidden">
@@ -391,11 +477,17 @@ export default function ClientDetail() {
               {client.tasks.map((t) => {
                 const overdue = isOverdue(t.dueDate, t.status);
                 return (
-                  <label key={t.id} className="flex items-center gap-2.5 px-4 py-2.5 cursor-pointer">
-                    <input type="checkbox" checked={t.status === "CONCLUIDA"} onChange={() => toggleTask(t)} className="accent-accent w-3.5 h-3.5 shrink-0" />
-                    <span className={`text-sm flex-1 min-w-0 truncate ${t.status === "CONCLUIDA" ? "line-through text-inkfaint" : "text-ink"}`}>{t.title}</span>
+                  <div key={t.id} className="flex items-center gap-2.5 px-4 py-2.5">
+                    <input type="checkbox" checked={t.status === "CONCLUIDA"} onChange={() => toggleTask(t)} className="accent-accent w-3.5 h-3.5 shrink-0 cursor-pointer" />
+                    <span onClick={() => toggleTask(t)} className={`text-sm flex-1 min-w-0 truncate cursor-pointer ${t.status === "CONCLUIDA" ? "line-through text-inkfaint" : "text-ink"}`}>{t.title}</span>
                     <span className={`text-[10.5px] mono shrink-0 ${overdue ? "text-danger font-semibold" : "text-inkfaint"}`}>{overdue ? "atrasada · " : ""}{fmtDate(t.dueDate)}</span>
-                  </label>
+                    {canEdit && (
+                      <button onClick={() => deleteTask(t)} aria-label="Excluir tarefa" title="Excluir tarefa (só sócio)"
+                        className="shrink-0 w-5 h-5 flex items-center justify-center rounded text-inkfaint hover:text-danger hover:bg-dangersoft transition">
+                        ×
+                      </button>
+                    )}
+                  </div>
                 );
               })}
               {client.tasks.length === 0 && <div className="px-4 py-6 text-center text-inkfaint text-xs">Sem tarefas.</div>}

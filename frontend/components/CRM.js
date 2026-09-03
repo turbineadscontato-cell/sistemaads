@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
 import LeadsKanban from "./LeadsKanban";
 import MeetingsCalendar from "./MeetingsCalendar";
+import MeetingsList from "./MeetingsList";
 
 export default function CRM() {
   const [subtab, setSubtab] = useState("funil");
@@ -38,6 +39,17 @@ export default function CRM() {
           Funil de vendas
         </button>
         <button
+          onClick={() => setSubtab("reunioes")}
+          className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${subtab === "reunioes" ? "bg-accent text-white" : "text-inksoft hover:text-ink"}`}
+        >
+          Reuniões agendadas
+          {meetings.filter((m) => m.status === "solicitada").length > 0 && (
+            <span className="ml-1.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-danger text-white text-[9.5px] font-bold">
+              {meetings.filter((m) => m.status === "solicitada").length}
+            </span>
+          )}
+        </button>
+        <button
           onClick={() => setSubtab("calendario")}
           className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${subtab === "calendario" ? "bg-accent text-white" : "text-inksoft hover:text-ink"}`}
         >
@@ -46,6 +58,7 @@ export default function CRM() {
       </div>
 
       {subtab === "funil" && <LeadsKanban leads={leads} onChange={load} loading={loading} />}
+      {subtab === "reunioes" && <MeetingsList meetings={meetings} onChange={load} />}
       {subtab === "calendario" && <MeetingsCalendar meetings={meetings} leads={leads} onChange={load} />}
     </section>
   );

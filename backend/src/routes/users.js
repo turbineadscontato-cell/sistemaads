@@ -14,7 +14,7 @@ router.use(requireAuth);
 router.get("/gestores", async (req, res) => {
   const gestores = await prisma.user.findMany({
     where: { role: { in: ["GESTOR", "SOCIO"] }, active: true },
-    select: { id: true, name: true, email: true, role: true },
+    select: { id: true, name: true, email: true, role: true, rank: true, avatarUrl: true },
     orderBy: { name: "asc" },
   });
   res.json(gestores);
@@ -25,7 +25,7 @@ router.get("/", requireRole("SOCIO"), async (req, res) => {
   // from their own portal (see /api/patients/:id/portal-user), not here.
   const users = await prisma.user.findMany({
     where: { role: { not: "PACIENTE" } },
-    select: { id: true, name: true, email: true, role: true, active: true, createdAt: true, clientId: true, client: { select: { name: true } }, avatarUrl: true },
+    select: { id: true, name: true, email: true, role: true, active: true, createdAt: true, clientId: true, client: { select: { name: true } }, avatarUrl: true, rank: true },
     orderBy: { name: "asc" },
   });
   res.json(users);
@@ -55,14 +55,20 @@ router.post("/", requireRole("SOCIO"), async (req, res) => {
   }
 });
 
+const VALID_RANKS = ["BRONZE", "PRATA", "OURO", "PLATINA", "DRAGAO"];
+
 router.patch("/:id", requireRole("SOCIO"), async (req, res) => {
-  const { name, email, role, active, password, clientId } = req.body || {};
+  const { name, email, role, active, password, clientId, rank } = req.body || {};
+  if (rank !== undefined && rank !== null && !VALID_RANKS.includes(rank)) {
+    return res.status(400).json({ error: "Nível inválido." });
+  }
   const data = {
     ...(name !== undefined && { name }),
     ...(email !== undefined && email !== "" && { email: email.toLowerCase().trim() }),
     ...(role !== undefined && { role }),
     ...(active !== undefined && { active }),
     ...(clientId !== undefined && { clientId: clientId || null }),
+    ...(rank !== undefined && rank !== null && { rank }),
   };
   if (password) data.passwordHash = await bcrypt.hash(password, 10);
 
@@ -70,7 +76,7 @@ router.patch("/:id", requireRole("SOCIO"), async (req, res) => {
     const user = await prisma.user.update({
       where: { id: req.params.id },
       data,
-      select: { id: true, name: true, email: true, role: true, active: true, clientId: true },
+      select: { id: true, name: true, email: true, role: true, active: true, clientId: true, rank: true },
     });
     res.json(user);
   } catch (err) {

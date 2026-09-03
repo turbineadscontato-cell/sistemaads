@@ -37,7 +37,7 @@ const TABS = [
 
 function fmtDate(d) {
   if (!d) return "—";
-  return new Date(d).toLocaleDateString("pt-BR");
+  return new Date(d).toLocaleDateString("pt-BR", { timeZone: "UTC" });
 }
 function fmtDateTime(d) {
   if (!d) return "—";
@@ -177,6 +177,15 @@ export default function ClientPortal() {
                     <div className="text-[11px] uppercase tracking-wide text-inkfaint">Dia de otimização</div>
                     <div className="font-display font-semibold text-base mt-1 text-ink">{weekdayPhrase(client.optimizationDay)}</div>
                   </div>
+                  {client.optimizationDay != null && (
+                    <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">
+                      <div className="text-[11px] uppercase tracking-wide text-inkfaint">Última otimização</div>
+                      <div className="font-display font-semibold text-base mt-1 text-success">
+                        {client.lastOptimizedAt ? `Feita em ${fmtDate(client.lastOptimizedAt)} ✓` : "Ainda não registrada"}
+                      </div>
+                      <div className="text-[11px] text-inkfaint mt-1">Próxima: {fmtDate(client.nextOptimizationDate)}</div>
+                    </div>
+                  )}
                 </>
               )}
               <div className="bg-surface border border-border rounded-xl p-4 shadow-sm">

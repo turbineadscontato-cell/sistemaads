@@ -60,6 +60,11 @@ model User {
   // navegador antes do envio) — cada usuário troca a própria.
   avatarUrl    String?
 
+  // Nível/patente gamificado do gestor/atendente (só o sócio define, na
+  // gestão de usuários) — BRONZE < PRATA < OURO < PLATINA < DRAGAO.
+  // Puramente simbólico/motivacional, exibido como um brasão com emoji.
+  rank String @default("BRONZE")
+
   clients        Client[]  @relation("GestorClients")
   tasks          Task[]    @relation("GestorTasks")
   leads          Lead[]    @relation("AtendenteLeads")
@@ -87,6 +92,14 @@ model Client {
   startDate      DateTime?
   notes          String?
   optimizationDay   Int?     // weekday the account should be optimized every week (0 = domingo … 6 = sábado, same convention as JS Date.getDay())
+  // Concrete tracked date for the next otimização (instead of just inferring
+  // it from optimizationDay + today's weekday, which could never tell "already
+  // done this week" from "still pending"). Seeded from optimizationDay when
+  // it's set/changed, then auto-advances +7 dias every time markOptimized is
+  // used. lastOptimizedAt is just the visible "fizemos em DD/MM" confirmation
+  // for both the agência and o cliente.
+  nextOptimizationDate DateTime?
+  lastOptimizedAt      DateTime?
   activeCreative    String?  // short label for whichever creative is currently live
   createdAt      DateTime     @default(now())
 
@@ -164,6 +177,7 @@ model Lead {
   contact   String?
   origin    String?
   status    String   @default("novo")
+  notes     String?
   createdAt DateTime @default(now())
 
   atendenteId String?

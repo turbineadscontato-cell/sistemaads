@@ -34,7 +34,7 @@ const PAYMENT_CLASS = {
 
 function fmtDate(d) {
   if (!d) return null;
-  return new Date(d).toLocaleDateString("pt-BR");
+  return new Date(d).toLocaleDateString("pt-BR", { timeZone: "UTC" });
 }
 function fmtDateTime(d) {
   if (!d) return "";

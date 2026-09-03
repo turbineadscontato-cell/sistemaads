@@ -1,6 +1,7 @@
 const express = require("express");
 const prisma = require("../prisma");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const XLSX = require("xlsx");
 
 const router = express.Router();
 router.use(requireAuth);
@@ -12,6 +13,8 @@ router.use(requireRole("SOCIO", "GESTOR", "CLIENTE"));
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5-20250929";
 const MAX_IMAGES = 3;
 const MAX_IMAGE_B64_CHARS = 6_000_000; // ~4.5MB decoded, well under the API's per-image limit
+const MAX_SPREADSHEET_B64_CHARS = 8_000_000; // ~6MB decoded
+const MAX_EXTRACTED_CHARS = 60_000; // keeps the export inside a sane prompt size
 
 const AWARENESS_DATES_REFERENCE = `Referência de datas e sazonalidades no Brasil (use as relevantes ao mês pedido e ao nicho do cliente; ignore as irrelevantes):
 - Janeiro: metas de ano novo, "ano novo, vida nova", ansiedade de recomeço.
@@ -244,6 +247,41 @@ Gere entre 6 e 10 ideias distribuídas ao longo do mês (datas dentro do mês pe
     }
   } catch (err) {
     res.status(err.notConfigured ? 501 : 502).json({ error: err.message });
+  }
+});
+
+// Extrai o conteúdo de uma planilha exportada do Gerenciador de Anúncios
+// (Meta Ads) em .xlsx/.xls — devolve como texto tipo CSV pra anexar na
+// conversa com a IA. CSV puro não precisa passar por aqui: o navegador já
+// lê o texto direto (não precisa de xlsx pra isso).
+router.post("/extract-spreadsheet", async (req, res) => {
+  const { fileName, dataBase64 } = req.body || {};
+  if (!dataBase64) return res.status(400).json({ error: "Envie o arquivo." });
+  if (dataBase64.length > MAX_SPREADSHEET_B64_CHARS) {
+    return res.status(413).json({ error: "Arquivo grande demais — exporte um período menor da campanha." });
+  }
+  try {
+    const buffer = Buffer.from(dataBase64, "base64");
+    const workbook = XLSX.read(buffer, { type: "buffer" });
+    const parts = [];
+    // Cobre até as 3 primeiras abas (o Gerenciador de Anúncios às vezes
+    // exporta "Dashboard" + abas por nível — campanha/conjunto/anúncio).
+    for (const sheetName of workbook.SheetNames.slice(0, 3)) {
+      const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]);
+      if (csv.trim()) parts.push(`--- Aba: ${sheetName} ---\n${csv.trim()}`);
+    }
+    let text = parts.join("\n\n");
+    let truncated = false;
+    if (text.length > MAX_EXTRACTED_CHARS) {
+      text = text.slice(0, MAX_EXTRACTED_CHARS);
+      truncated = true;
+    }
+    if (!text.trim()) {
+      return res.status(400).json({ error: "Não consegui ler dados nessa planilha — confira se o arquivo não está vazio ou corrompido." });
+    }
+    res.json({ text, truncated, sheets: workbook.SheetNames.length });
+  } catch (err) {
+    res.status(400).json({ error: "Não consegui abrir esse arquivo. Confira se é um .xlsx/.xls válido exportado do Gerenciador de Anúncios." });
   }
 });
 

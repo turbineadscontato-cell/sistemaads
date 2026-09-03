@@ -34,7 +34,7 @@ const TABS = [
 
 function fmtDate(d) {
   if (!d) return "—";
-  return new Date(d).toLocaleDateString("pt-BR");
+  return new Date(d).toLocaleDateString("pt-BR", { timeZone: "UTC" });
 }
 function fmtDateTime(d) {
   if (!d) return "—";

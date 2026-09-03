@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { RANKS } from "../lib/rank";
+import RankBadge from "./RankBadge";
 
 const ROLE_LABEL = { SOCIO: "Sócio", GESTOR: "Gestor de tráfego", ATENDENTE: "Atendente", CLIENTE: "Cliente (portal)" };
 
@@ -18,6 +20,7 @@ export default function UsersPanel() {
   const [resetPassword, setResetPassword] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [editRole, setEditRole] = useState({ role: "GESTOR", clientId: "", email: "", password: "" });
+  const [savingRank, setSavingRank] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -95,6 +98,18 @@ export default function UsersPanel() {
     }
   }
 
+  async function setRank(u, rank) {
+    setSavingRank(u.id);
+    try {
+      await api(`/api/users/${u.id}`, { method: "PATCH", body: { rank } });
+      load();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSavingRank(null);
+    }
+  }
+
   async function deleteUser(u) {
     if (!confirm(`Excluir permanentemente o login de "${u.name}"? Essa ação não pode ser desfeita.`)) return;
     try {
@@ -152,11 +167,12 @@ export default function UsersPanel() {
           <span className="text-xs text-inkfaint">{users.length} usuário(s)</span>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[560px]">
+          <table className="w-full text-sm min-w-[680px]">
             <thead>
               <tr className="text-[10.5px] uppercase text-inkfaint text-left">
                 <th className="px-4.5 py-2.5">Nome</th>
                 <th className="px-4.5 py-2.5">Papel</th>
+                <th className="px-4.5 py-2.5">Nível</th>
                 <th className="px-4.5 py-2.5">Status</th>
                 <th className="px-4.5 py-2.5">Ações</th>
               </tr>
@@ -213,6 +229,23 @@ export default function UsersPanel() {
                     )}
                   </td>
                   <td className="px-4.5 py-3 whitespace-nowrap">
+                    {(u.role === "GESTOR" || u.role === "ATENDENTE" || u.role === "SOCIO") ? (
+                      <div className="flex flex-col gap-1">
+                        <RankBadge rank={u.rank} size="sm" />
+                        <select
+                          value={u.rank || "BRONZE"}
+                          disabled={savingRank === u.id}
+                          onChange={(e) => setRank(u, e.target.value)}
+                          className="text-[10.5px] px-1 py-0.5 rounded border border-border bg-surface2 text-inksoft"
+                        >
+                          {RANKS.map((r) => <option key={r.key} value={r.key}>{r.emoji} {r.label}</option>)}
+                        </select>
+                      </div>
+                    ) : (
+                      <span className="text-inkfaint">—</span>
+                    )}
+                  </td>
+                  <td className="px-4.5 py-3 whitespace-nowrap">
                     <span className={`pill ${u.active ? "pill-ATIVO" : "pill-CANCELADO"}`}>{u.active ? "Ativo" : "Desativado"}</span>
                   </td>
                   <td className="px-4.5 py-3">
@@ -248,7 +281,7 @@ export default function UsersPanel() {
                 </tr>
               ))}
               {!loading && users.length === 0 && (
-                <tr><td colSpan={4} className="px-4.5 py-8 text-center text-inkfaint">Nenhum usuário cadastrado.</td></tr>
+                <tr><td colSpan={5} className="px-4.5 py-8 text-center text-inkfaint">Nenhum usuário cadastrado.</td></tr>
               )}
             </tbody>
           </table>
