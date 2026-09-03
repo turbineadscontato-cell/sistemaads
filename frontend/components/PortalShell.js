@@ -44,9 +44,14 @@ export default function PortalShell({ brand, tabs, activeTab, onTabChange, userN
           className="md:hidden fixed inset-0 z-40 bg-black/65 backdrop-blur-[2px] transition-opacity" />
       )}
 
-      {/* Sidebar / drawer */}
+      {/* Sidebar / drawer — always position:fixed (never sticky) so it's fully
+          removed from normal document flow at every breakpoint. The parent
+          wrapper here is a plain block div, not a flex container, so a
+          sticky/static sidebar would otherwise reserve its own full-height
+          row in the flow and push the whole main content below the fold
+          instead of beside it. */}
       <aside
-        className={`fixed md:sticky top-0 left-0 z-50 h-screen w-[272px] shrink-0 bg-sidebar border-r border-border flex flex-col
+        className={`fixed top-0 left-0 z-50 h-screen w-[272px] shrink-0 bg-sidebar border-r border-border flex flex-col
           shadow-2xl md:shadow-none transition-transform duration-300 ease-out
           ${open ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}
       >
