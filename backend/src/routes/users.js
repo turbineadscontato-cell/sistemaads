@@ -2,6 +2,7 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const prisma = require("../prisma");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { onlyDigits } = require("../utils/identifier");
 
 const router = express.Router();
 router.use(requireAuth);
@@ -32,9 +33,15 @@ router.get("/", requireRole("SOCIO"), async (req, res) => {
 });
 
 router.post("/", requireRole("SOCIO"), async (req, res) => {
-  const { name, email, password, role, clientId } = req.body || {};
-  if (!name || !email || !password || !role) {
-    return res.status(400).json({ error: "Nome, email, senha e papel são obrigatórios." });
+  const { name, email, cpf, phone, password, role, clientId } = req.body || {};
+  const cleanEmail = email ? email.toLowerCase().trim() : null;
+  const cleanCpf = cpf ? onlyDigits(cpf) : null;
+  const cleanPhone = phone ? onlyDigits(phone) : null;
+  if (!name || !password || !role) {
+    return res.status(400).json({ error: "Nome, senha e papel são obrigatórios." });
+  }
+  if (!cleanEmail && !cleanCpf && !cleanPhone) {
+    return res.status(400).json({ error: "Informe email, CPF ou telefone pra criar o login." });
   }
   if (!["SOCIO", "GESTOR", "ATENDENTE", "CLIENTE"].includes(role)) {
     return res.status(400).json({ error: "Papel inválido." });
@@ -45,12 +52,12 @@ router.post("/", requireRole("SOCIO"), async (req, res) => {
   const passwordHash = await bcrypt.hash(password, 10);
   try {
     const user = await prisma.user.create({
-      data: { name, email: email.toLowerCase().trim(), passwordHash, role, clientId: role === "CLIENTE" ? clientId : null },
-      select: { id: true, name: true, email: true, role: true, active: true, clientId: true },
+      data: { name, email: cleanEmail, cpf: cleanCpf, phone: cleanPhone, passwordHash, role, clientId: role === "CLIENTE" ? clientId : null },
+      select: { id: true, name: true, email: true, cpf: true, phone: true, role: true, active: true, clientId: true },
     });
     res.status(201).json(user);
   } catch (err) {
-    if (err.code === "P2002") return res.status(409).json({ error: "Já existe um usuário com esse email." });
+    if (err.code === "P2002") return res.status(409).json({ error: "Já existe um usuário com esse email, CPF ou telefone." });
     throw err;
   }
 });
@@ -58,13 +65,15 @@ router.post("/", requireRole("SOCIO"), async (req, res) => {
 const VALID_RANKS = ["BRONZE", "PRATA", "OURO", "PLATINA", "DRAGAO"];
 
 router.patch("/:id", requireRole("SOCIO"), async (req, res) => {
-  const { name, email, role, active, password, clientId, rank } = req.body || {};
+  const { name, email, cpf, phone, role, active, password, clientId, rank } = req.body || {};
   if (rank !== undefined && rank !== null && !VALID_RANKS.includes(rank)) {
     return res.status(400).json({ error: "Nível inválido." });
   }
   const data = {
     ...(name !== undefined && { name }),
-    ...(email !== undefined && email !== "" && { email: email.toLowerCase().trim() }),
+    ...(email !== undefined && { email: email ? email.toLowerCase().trim() : null }),
+    ...(cpf !== undefined && { cpf: cpf ? onlyDigits(cpf) : null }),
+    ...(phone !== undefined && { phone: phone ? onlyDigits(phone) : null }),
     ...(role !== undefined && { role }),
     ...(active !== undefined && { active }),
     ...(clientId !== undefined && { clientId: clientId || null }),
@@ -76,11 +85,11 @@ router.patch("/:id", requireRole("SOCIO"), async (req, res) => {
     const user = await prisma.user.update({
       where: { id: req.params.id },
       data,
-      select: { id: true, name: true, email: true, role: true, active: true, clientId: true, rank: true },
+      select: { id: true, name: true, email: true, cpf: true, phone: true, role: true, active: true, clientId: true, rank: true },
     });
     res.json(user);
   } catch (err) {
-    if (err.code === "P2002") return res.status(409).json({ error: "Já existe um usuário com esse email." });
+    if (err.code === "P2002") return res.status(409).json({ error: "Já existe um usuário com esse email, CPF ou telefone." });
     res.status(404).json({ error: "Usuário não encontrado." });
   }
 });

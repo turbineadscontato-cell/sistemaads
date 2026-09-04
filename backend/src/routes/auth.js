@@ -2,25 +2,37 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const prisma = require("../prisma");
 const { signToken, requireAuth } = require("../middleware/auth");
+const { onlyDigits } = require("../utils/identifier");
 
 const router = express.Router();
 
 router.post("/login", async (req, res) => {
-  const { email, password } = req.body || {};
+  // "identifier" é o campo novo (email, CPF ou telefone); "email" continua
+  // aceito por compatibilidade com quem já tinha a tela antiga aberta.
+  const identifier = (req.body?.identifier || req.body?.email || "").trim();
+  const { password } = req.body || {};
 
-  if (!email || !password) {
-    return res.status(400).json({ error: "Informe email e senha." });
+  if (!identifier || !password) {
+    return res.status(400).json({ error: "Informe email, CPF ou telefone e senha." });
   }
 
-  const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
+  // Email sempre tem "@"; CPF/telefone a gente compara só pelos dígitos,
+  // pra funcionar independente de como a pessoa formatou ao digitar.
+  let user;
+  if (identifier.includes("@")) {
+    user = await prisma.user.findUnique({ where: { email: identifier.toLowerCase() } });
+  } else {
+    const digits = onlyDigits(identifier);
+    user = digits ? await prisma.user.findFirst({ where: { OR: [{ cpf: digits }, { phone: digits }] } }) : null;
+  }
 
   if (!user || !user.active) {
-    return res.status(401).json({ error: "Email ou senha inválidos." });
+    return res.status(401).json({ error: "Login ou senha inválidos." });
   }
 
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) {
-    return res.status(401).json({ error: "Email ou senha inválidos." });
+    return res.status(401).json({ error: "Login ou senha inválidos." });
   }
 
   const token = signToken(user);

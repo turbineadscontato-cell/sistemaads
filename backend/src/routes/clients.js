@@ -1,8 +1,17 @@
 const express = require("express");
+const bcrypt = require("bcryptjs");
 const prisma = require("../prisma");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { nextOccurrence, advanceAfterOptimizing } = require("../utils/optimizationSchedule");
 const { addBusinessDays } = require("../utils/businessDays");
+const { SERVICE_OPTIONS, SERVICE_LABEL, COMMISSION_PER_SERVICE } = require("../utils/services");
+const { onlyDigits } = require("../utils/identifier");
+
+const VALID_SERVICE_KEYS = SERVICE_OPTIONS.map((s) => s.key);
+function sanitizeServices(services) {
+  if (!Array.isArray(services)) return [];
+  return services.filter((s) => VALID_SERVICE_KEYS.includes(s));
+}
 
 // Checklist padrão de onboarding — criado automaticamente pra todo cliente
 // novo no plano COMPLETO (tráfego pago), com prazo em dias úteis contados a
@@ -78,12 +87,18 @@ router.get("/:id", requireRole("SOCIO", "GESTOR"), async (req, res) => {
   res.json(client);
 });
 
-// Only sócios create/edit/delete clients and reassign gestores.
-router.post("/", requireRole("SOCIO"), async (req, res) => {
-  const { name, niche, status, plan, monthlyValue, dailyAdBudget, startDate, gestorId, notes, optimizationDay, activeCreative, planType } = req.body || {};
+// Sócio cadastra cliente novo (conta pro financeiro/MRR do painel, ganha
+// checklist de onboarding automático). Gestor também pode cadastrar — mas só
+// pra registrar cliente antigo na própria carteira (aba "Meus clientes"):
+// fica preso ao próprio gestorId, não soma no financeiro do painel e não
+// ganha o checklist de onboarding (não é uma contratação nova).
+router.post("/", requireRole("SOCIO", "GESTOR"), async (req, res) => {
+  const isSocio = req.user.role === "SOCIO";
+  const { name, niche, status, plan, monthlyValue, dailyAdBudget, startDate, gestorId, notes, optimizationDay, activeCreative, planType, services, otherServiceNote } = req.body || {};
   if (!name) return res.status(400).json({ error: "Nome do cliente é obrigatório." });
 
   const optDay = optimizationDay != null && optimizationDay !== "" ? Number(optimizationDay) : null;
+  const cleanServices = sanitizeServices(services);
   const client = await prisma.client.create({
     data: {
       name,
@@ -93,7 +108,9 @@ router.post("/", requireRole("SOCIO"), async (req, res) => {
       monthlyValue: monthlyValue != null ? Number(monthlyValue) : null,
       dailyAdBudget: dailyAdBudget != null ? Number(dailyAdBudget) : null,
       startDate: startDate ? new Date(startDate) : null,
-      gestorId: gestorId || null,
+      // Gestor só cadastra pra própria carteira — ignora qualquer gestorId
+      // que venha no corpo da requisição.
+      gestorId: isSocio ? (gestorId || null) : req.user.id,
       notes: notes || null,
       optimizationDay: optDay,
       // Seed the first "próxima otimização" right away so the alert/board
@@ -102,13 +119,19 @@ router.post("/", requireRole("SOCIO"), async (req, res) => {
       nextOptimizationDate: optDay != null ? nextOccurrence(optDay, new Date()) : null,
       activeCreative: activeCreative || null,
       planType: planType === "SO_SISTEMA" ? "SO_SISTEMA" : "COMPLETO",
+      services: cleanServices,
+      otherServiceNote: cleanServices.includes("OUTRO") ? (otherServiceNote || null) : null,
+      // Só o que o sócio cadastra entra no MRR/financeiro do painel — cliente
+      // antigo que o gestor está só catalogando não deve inflar esses números.
+      countsInFinance: isSocio,
     },
   });
 
-  // Checklist automático de onboarding — só faz sentido pra quem contratou
-  // tráfego pago (conta de anúncio, criativo, campanha...). Cliente só
-  // sistema não tem esses passos.
-  if (client.planType !== "SO_SISTEMA") {
+  // Checklist automático de onboarding — só pra contratação nova feita pelo
+  // sócio, e só quem contratou tráfego pago (conta de anúncio, criativo,
+  // campanha...). Cliente antigo cadastrado pelo gestor, ou cliente só
+  // sistema, não ganham esses passos.
+  if (isSocio && client.planType !== "SO_SISTEMA") {
     const createdAt = client.createdAt;
     await prisma.task.createMany({
       data: ONBOARDING_TASKS.map((t) => ({
@@ -122,6 +145,77 @@ router.post("/", requireRole("SOCIO"), async (req, res) => {
   }
 
   res.status(201).json(client);
+});
+
+// Sócio "dá o aceite" dos serviços contratados pelo cliente — lança uma
+// comissão de R$50 por serviço pro gestor responsável. Só pode ser feito uma
+// vez por cliente (servicesAcceptedAt marca isso); pra mudar os serviços
+// depois disso, seria um novo aceite manual — mantido simples de propósito.
+router.post("/:id/accept-services", requireRole("SOCIO"), async (req, res) => {
+  const client = await prisma.client.findUnique({ where: { id: req.params.id } });
+  if (!client) return res.status(404).json({ error: "Cliente não encontrado." });
+  if (client.servicesAcceptedAt) {
+    return res.status(400).json({ error: "Os serviços desse cliente já foram aceitos." });
+  }
+  if (!client.gestorId) {
+    return res.status(400).json({ error: "Defina um gestor responsável antes de dar o aceite." });
+  }
+  if (!client.services || client.services.length === 0) {
+    return res.status(400).json({ error: "Esse cliente não tem nenhum serviço marcado." });
+  }
+
+  await prisma.$transaction([
+    prisma.commission.createMany({
+      data: client.services.map((key) => ({
+        amount: COMMISSION_PER_SERVICE,
+        service: key === "OUTRO" && client.otherServiceNote ? `Outro (${client.otherServiceNote})` : (SERVICE_LABEL[key] || key),
+        gestorId: client.gestorId,
+        clientId: client.id,
+      })),
+    }),
+    prisma.client.update({ where: { id: client.id }, data: { servicesAcceptedAt: new Date() } }),
+  ]);
+
+  const totalAdded = client.services.length * COMMISSION_PER_SERVICE;
+  res.json({ ok: true, totalAdded });
+});
+
+// Sócio (qualquer cliente) ou gestor (só cliente da própria carteira) cria
+// ou reseta o login do portal do cliente — com email, CPF ou telefone como
+// identificador (pelo menos um dos três é obrigatório).
+router.post("/:id/portal-login", requireRole("SOCIO", "GESTOR"), async (req, res) => {
+  const client = await prisma.client.findFirst({ where: { id: req.params.id, ...scopeFilter(req.user) } });
+  if (!client) return res.status(404).json({ error: "Cliente não encontrado." });
+
+  const { name, email, cpf, phone, password } = req.body || {};
+  const cleanEmail = email ? email.toLowerCase().trim() : null;
+  const cleanCpf = cpf ? onlyDigits(cpf) : null;
+  const cleanPhone = phone ? onlyDigits(phone) : null;
+  if (!cleanEmail && !cleanCpf && !cleanPhone) {
+    return res.status(400).json({ error: "Informe email, CPF ou telefone pra criar o login." });
+  }
+  if (!password) return res.status(400).json({ error: "Defina uma senha." });
+
+  try {
+    const existing = await prisma.user.findFirst({ where: { clientId: client.id, role: "CLIENTE" } });
+    const passwordHash = await bcrypt.hash(password, 10);
+    const data = {
+      name: name || client.name,
+      email: cleanEmail,
+      cpf: cleanCpf,
+      phone: cleanPhone,
+      passwordHash,
+      role: "CLIENTE",
+      clientId: client.id,
+    };
+    const user = existing
+      ? await prisma.user.update({ where: { id: existing.id }, data, select: { id: true, name: true, email: true, cpf: true, phone: true } })
+      : await prisma.user.create({ data, select: { id: true, name: true, email: true, cpf: true, phone: true } });
+    res.status(existing ? 200 : 201).json(user);
+  } catch (err) {
+    if (err.code === "P2002") return res.status(409).json({ error: "Já existe um login com esse email, CPF ou telefone." });
+    throw err;
+  }
 });
 
 // Self-service white-label branding for the client's OWN patients' portal —
@@ -185,10 +279,11 @@ router.patch("/:id", requireRole("SOCIO", "GESTOR"), async (req, res) => {
     return res.json(client);
   }
 
-  const { name, niche, status, plan, monthlyValue, dailyAdBudget, startDate, gestorId, notes, optimizationDay, activeCreative, planType, markOptimized } = req.body || {};
+  const { name, niche, status, plan, monthlyValue, dailyAdBudget, startDate, gestorId, notes, optimizationDay, activeCreative, planType, markOptimized, services, otherServiceNote, countsInFinance } = req.body || {};
   try {
     const existing = await prisma.client.findUnique({ where: { id: req.params.id } });
     if (!existing) return res.status(404).json({ error: "Cliente não encontrado." });
+    const cleanServices = services !== undefined ? sanitizeServices(services) : undefined;
     const client = await prisma.client.update({
       where: { id: req.params.id },
       data: {
@@ -204,6 +299,8 @@ router.patch("/:id", requireRole("SOCIO", "GESTOR"), async (req, res) => {
         ...(optimizationDay !== undefined && { optimizationDay: optimizationDay != null && optimizationDay !== "" ? Number(optimizationDay) : null }),
         ...(activeCreative !== undefined && { activeCreative: activeCreative || null }),
         ...(planType !== undefined && { planType: planType === "SO_SISTEMA" ? "SO_SISTEMA" : "COMPLETO" }),
+        ...(cleanServices !== undefined && { services: cleanServices, otherServiceNote: cleanServices.includes("OUTRO") ? (otherServiceNote || null) : null }),
+        ...(countsInFinance !== undefined && { countsInFinance: !!countsInFinance }),
         ...optimizationPatch(existing, { optimizationDay, markOptimized }),
       },
     });

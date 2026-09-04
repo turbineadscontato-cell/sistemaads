@@ -7,7 +7,7 @@ import { LOGO_LOGIN_SRC } from "../lib/logo";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -28,7 +28,7 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      const data = await api("/api/auth/login", { method: "POST", body: { email, password } });
+      const data = await api("/api/auth/login", { method: "POST", body: { identifier, password } });
       setSession(data.token, data.user);
       router.push(destinationFor(data.user.role));
     } catch (err) {
@@ -50,12 +50,12 @@ export default function LoginPage() {
           <h1 className="font-display font-semibold text-base text-ink mb-1">Entrar no painel</h1>
           <p className="text-inksoft text-xs mb-5">Acesso restrito à equipe TurbinaADS.</p>
 
-          <label className="block text-xs font-medium text-inksoft mb-1">Email</label>
+          <label className="block text-xs font-medium text-inksoft mb-1">Email, CPF ou telefone</label>
           <input
-            type="email"
+            type="text"
             required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
             className="w-full mb-3 px-3 py-2 text-sm rounded-lg border border-border bg-surface2 focus:outline-none focus:ring-2 focus:ring-accent/40"
             placeholder="voce@turbineads.com.br"
           />

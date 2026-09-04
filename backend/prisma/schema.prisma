@@ -51,7 +51,14 @@ enum PendencyStatus {
 model User {
   id           String   @id @default(cuid())
   name         String
-  email        String   @unique
+  // Login por email, CPF ou telefone — um login precisa de pelo menos UM
+  // desses três (validado na rota, não aqui), mas nenhum é obrigatório
+  // sozinho porque um login de cliente pode ser criado só com CPF/telefone,
+  // sem email. Todos únicos quando preenchidos (índice único do Postgres
+  // ignora múltiplos NULLs, então isso não trava logins sem email).
+  email        String?  @unique
+  cpf          String?  @unique
+  phone        String?  @unique
   passwordHash String
   role         Role
   active       Boolean  @default(true)
@@ -70,6 +77,10 @@ model User {
   leads          Lead[]    @relation("AtendenteLeads")
   meetings       Meeting[] @relation("ResponsavelMeetings")
   metaConnections MetaConnection[]
+  // Financeiro do gestor: comissões por serviço aceito (R$50 cada) e
+  // solicitações de saque/retirada de saldo — ver modelos abaixo.
+  commissions    Commission[]
+  withdrawals    WithdrawalRequest[]
 
   // Set only for role = CLIENTE: which client's portal this login can see.
   clientId String?
@@ -119,6 +130,20 @@ model Client {
   gestorId String?
   gestor   User?   @relation("GestorClients", fields: [gestorId], references: [id])
 
+  // Serviços contratados por esse cliente — social mídia, tráfego pago,
+  // landing page por fora, curso de vendas, mentoria, ou "outro" (com nota
+  // livre em otherServiceNote). Usado tanto pra mostrar o que o cliente
+  // contratou quanto pra calcular a comissão do gestor (R$50 por serviço)
+  // quando o sócio dá o aceite (servicesAcceptedAt).
+  services          String[]  @default([])
+  otherServiceNote  String?
+  servicesAcceptedAt DateTime?
+
+  // Só clientes cadastrados pelo sócio entram nos números financeiros do
+  // painel (MRR, comissão etc.) — um gestor pode cadastrar clientes antigos
+  // pra ter registro deles, mas isso não deve inflar a receita "nova".
+  countsInFinance Boolean @default(true)
+
   payments     Payment[]
   tasks        Task[]
   pendencies   Pendency[]
@@ -130,6 +155,39 @@ model Client {
   patients     Patient[]
   contentPosts ContentPost[]
   adAccounts   AdAccount[]
+  commissions  Commission[]
+}
+
+// Uma comissão de R$50 por serviço aceito, lançada pro gestor responsável
+// quando o sócio dá o aceite dos serviços do cliente (Client.servicesAcceptedAt).
+// Histórico imutável — o saldo do gestor é sempre recalculado a partir daqui
+// (soma das comissões menos saques aprovados), nunca um número solto que
+// possa dessincronizar.
+model Commission {
+  id        String   @id @default(cuid())
+  amount    Float
+  service   String // rótulo do serviço que gerou essa comissão
+  createdAt DateTime @default(now())
+
+  gestorId String
+  gestor   User   @relation(fields: [gestorId], references: [id])
+
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id])
+}
+
+// Pedido de retirada de saldo (emergência) feito pelo gestor — fica
+// SOLICITADA até o sócio aprovar ou recusar na aba Financeiro.
+model WithdrawalRequest {
+  id         String    @id @default(cuid())
+  amount     Float
+  status     String    @default("SOLICITADA") // SOLICITADA | APROVADA | RECUSADA
+  note       String?
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  gestorId String
+  gestor   User   @relation(fields: [gestorId], references: [id])
 }
 
 model Payment {

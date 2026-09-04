@@ -10,7 +10,9 @@ import ClientReports from "../../../../components/ClientReports";
 import ClientLeadsBoard from "../../../../components/ClientLeadsBoard";
 import ContentCalendar from "../../../../components/ContentCalendar";
 import Celebration from "../../../../components/Celebration";
+import AnimatedNumber from "../../../../components/AnimatedNumber";
 import { WEEKDAY_OPTIONS, weekdayPhrase } from "../../../../lib/weekday";
+import { SERVICE_OPTIONS, SERVICE_LABEL, COMMISSION_PER_SERVICE } from "../../../../lib/services";
 
 const STATUS_LABEL = { ATIVO: "Ativo", PENDENTE_PAGAMENTO: "Pendente", ONBOARDING: "Onboarding", CANCELADO: "Cancelado" };
 const PAYMENT_LABEL = { PAGO: "Pago", PENDENTE: "Pendente", ATRASADO: "Atrasado" };
@@ -64,6 +66,14 @@ export default function ClientDetail() {
   const [newTask, setNewTask] = useState({ title: "", dueDate: "", priority: "MEDIA" });
   const [celebrating, setCelebrating] = useState(null);
 
+  const [acceptingServices, setAcceptingServices] = useState(false);
+  const [acceptResult, setAcceptResult] = useState(null);
+  const [gestorBalance, setGestorBalance] = useState(null);
+
+  const [showLoginForm, setShowLoginForm] = useState(false);
+  const [loginForm, setLoginForm] = useState({ name: "", email: "", cpf: "", phone: "", password: "" });
+  const [savingLogin, setSavingLogin] = useState(false);
+
   useEffect(() => {
     const u = getUser();
     if (!u) { router.replace("/"); return; }
@@ -111,8 +121,17 @@ export default function ClientDetail() {
       optimizationDay: client.optimizationDay ?? "",
       activeCreative: client.activeCreative || "",
       planType: client.planType || "COMPLETO",
+      services: client.services || [],
+      otherServiceNote: client.otherServiceNote || "",
     });
     setEditing(true);
+  }
+
+  function toggleEditService(key) {
+    setEditForm((f) => {
+      const has = f.services.includes(key);
+      return { ...f, services: has ? f.services.filter((s) => s !== key) : [...f.services, key] };
+    });
   }
 
   async function saveEdit(e) {
@@ -126,6 +145,8 @@ export default function ClientDetail() {
             dailyAdBudget: editForm.dailyAdBudget !== "" ? Number(editForm.dailyAdBudget) : null,
             gestorId: editForm.gestorId || null,
             optimizationDay: editForm.optimizationDay !== "" ? Number(editForm.optimizationDay) : null,
+            services: editForm.services,
+            otherServiceNote: editForm.services.includes("OUTRO") ? editForm.otherServiceNote : null,
           }
         : {
             optimizationDay: editForm.optimizationDay !== "" ? Number(editForm.optimizationDay) : null,
@@ -223,6 +244,48 @@ export default function ClientDetail() {
     }
   }
 
+  // Sócio dá o aceite dos serviços contratados — isso gera a comissão do
+  // gestor (R$50 por serviço) de uma vez só, e é um aceite único por cliente.
+  async function acceptServices() {
+    if (!confirm(`Confirmar aceite dos serviços contratados? Isso gera a comissão do gestor (R$${COMMISSION_PER_SERVICE} por serviço).`)) return;
+    setAcceptingServices(true);
+    try {
+      const res = await api(`/api/clients/${id}/accept-services`, { method: "POST" });
+      setAcceptResult(res);
+      if (user.role === "SOCIO" && client.gestorId) {
+        try {
+          const summary = await api("/api/finance/summary");
+          const g = summary.gestores.find((x) => x.id === client.gestorId);
+          if (g) setGestorBalance(g.balance);
+        } catch {
+          // feedback opcional — não impede o resto do fluxo
+        }
+      }
+      load();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setAcceptingServices(false);
+    }
+  }
+
+  // Sócio (qualquer cliente) ou gestor (só nos clientes dele) cria/reseta o
+  // login do portal do cliente, usando email, CPF ou telefone.
+  async function savePortalLogin(e) {
+    e.preventDefault();
+    setSavingLogin(true);
+    try {
+      await api(`/api/clients/${id}/portal-login`, { method: "POST", body: loginForm });
+      alert("Login do portal salvo com sucesso!");
+      setLoginForm({ name: "", email: "", cpf: "", phone: "", password: "" });
+      setShowLoginForm(false);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSavingLogin(false);
+    }
+  }
+
   if (error) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-bg px-4">
@@ -275,6 +338,7 @@ export default function ClientDetail() {
           <form onSubmit={saveEdit} className="bg-surface border border-accent/30 rounded-xl p-4 shadow-sm mb-6 space-y-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-accent">Editar cliente</div>
             {canEdit ? (
+              <>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
                 <div>
                   <label className="block text-[11px] text-inkfaint mb-1">Nome</label>
@@ -341,6 +405,28 @@ export default function ClientDetail() {
                     placeholder="ex: Vídeo depoimento v3" className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink" />
                 </div>
               </div>
+              <div>
+                <label className="block text-[11px] text-inkfaint mb-1">Serviços contratados</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {SERVICE_OPTIONS.map((s) => {
+                    const active = editForm.services.includes(s.key);
+                    return (
+                      <button key={s.key} type="button" onClick={() => toggleEditService(s.key)}
+                        className={`text-[12px] font-medium px-2.5 py-1 rounded-lg border transition ${active ? "bg-accent text-white border-accent" : "border-border text-inksoft hover:border-accent"}`}>
+                        {s.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {editForm.services.includes("OUTRO") && (
+                  <input value={editForm.otherServiceNote} onChange={(e) => setEditForm({ ...editForm, otherServiceNote: e.target.value })}
+                    placeholder="Qual outro serviço?" className="mt-2 w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink" />
+                )}
+                {client.servicesAcceptedAt && (
+                  <p className="text-[10.5px] text-inkfaint mt-1.5">O aceite dos serviços já foi dado em {fmtDate(client.servicesAcceptedAt)} — mudar aqui não gera nova comissão.</p>
+                )}
+              </div>
+              </>
             ) : isSoSistema ? (
               <p className="text-xs text-inkfaint">Esse cliente está no plano só sistema — sem campos de tráfego pago para editar aqui.</p>
             ) : (
@@ -401,6 +487,44 @@ export default function ClientDetail() {
             </>
           )}
         </div>
+
+        {client.services && client.services.length > 0 && (
+          <div className="bg-surface border border-border rounded-xl p-4 shadow-sm mb-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-inkfaint mb-1.5">Serviços contratados</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {client.services.map((key) => (
+                    <span key={key} className="text-[11.5px] font-medium px-2.5 py-1 rounded-lg bg-accentsoft text-accent">
+                      {key === "OUTRO" ? (client.otherServiceNote || "Outro") : (SERVICE_LABEL[key] || key)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              {canEdit && (
+                client.servicesAcceptedAt ? (
+                  <span className="text-[11.5px] text-success font-medium shrink-0">✓ Aceite dado em {fmtDate(client.servicesAcceptedAt)}</span>
+                ) : (
+                  <button onClick={acceptServices} disabled={acceptingServices}
+                    className="text-xs font-semibold px-3.5 py-2 rounded-lg bg-successsoft text-success hover:brightness-95 transition disabled:opacity-60 shrink-0">
+                    {acceptingServices ? "Confirmando…" : `Dar aceite dos serviços (gera R$${client.services.length * COMMISSION_PER_SERVICE} de comissão)`}
+                  </button>
+                )
+              )}
+            </div>
+            {acceptResult && (
+              <div className="mt-3 pt-3 border-t border-border text-sm">
+                <span className="text-inkfaint">Comissão gerada para {client.gestor?.name || "o gestor"}: </span>
+                <AnimatedNumber value={acceptResult.totalAdded} className="font-display font-bold mono text-success" />
+                {gestorBalance != null && (
+                  <div className="text-[11px] text-inkfaint mt-1">
+                    Novo saldo a receber do gestor: <AnimatedNumber value={gestorBalance} className="mono font-semibold text-ink" />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {!isSoSistema && client.optimizationDay != null && (
           <div className="bg-surface border border-border rounded-xl p-4 shadow-sm flex flex-wrap items-center gap-4 justify-between">
@@ -540,6 +664,39 @@ export default function ClientDetail() {
               )}
             </div>
           </div>
+
+          {canOperate && (
+            <div className="bg-surface border border-border rounded-xl shadow-sm overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-border flex items-center justify-between">
+                <span className="font-display font-semibold text-sm text-ink">Login do portal do cliente</span>
+                <button onClick={() => setShowLoginForm((v) => !v)} className="text-[11.5px] text-accent hover:underline shrink-0">
+                  {showLoginForm ? "Cancelar" : "Criar / redefinir login"}
+                </button>
+              </div>
+              {showLoginForm ? (
+                <form onSubmit={savePortalLogin} className="p-3.5 space-y-2.5">
+                  <p className="text-[11px] text-inkfaint">Preencha pelo menos um: email, CPF ou telefone, mais uma senha. Isso cria (ou atualiza) o acesso do cliente ao portal.</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <input placeholder="Nome" value={loginForm.name} onChange={(e) => setLoginForm({ ...loginForm, name: e.target.value })}
+                      className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink" />
+                    <input placeholder="Email" value={loginForm.email} onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
+                      className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink" />
+                    <input placeholder="CPF" value={loginForm.cpf} onChange={(e) => setLoginForm({ ...loginForm, cpf: e.target.value })}
+                      className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink mono" />
+                    <input placeholder="Telefone" value={loginForm.phone} onChange={(e) => setLoginForm({ ...loginForm, phone: e.target.value })}
+                      className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink mono" />
+                  </div>
+                  <input required type="password" placeholder="Senha" value={loginForm.password} onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                    className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink" />
+                  <button disabled={savingLogin} className="bg-accent text-white text-xs font-medium px-3 py-1.5 rounded-md hover:bg-accentink disabled:opacity-60">
+                    {savingLogin ? "Salvando…" : "Salvar login"}
+                  </button>
+                </form>
+              ) : (
+                <div className="px-4 py-6 text-center text-inkfaint text-xs">Crie o acesso do cliente ao portal usando email, CPF ou telefone.</div>
+              )}
+            </div>
+          )}
 
           <ClientFiles clientId={id} canManage={canOperate} showScriptGenerator={canOperate} allowClientUpload={false} />
           {!isSoSistema && <ClientReports clientId={id} canManage={canOperate} />}

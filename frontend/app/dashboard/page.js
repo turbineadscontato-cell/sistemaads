@@ -14,8 +14,12 @@ import Campaigns from "../../components/Campaigns";
 import DashboardShell from "../../components/DashboardShell";
 import Celebration from "../../components/Celebration";
 import RankBadge from "../../components/RankBadge";
+import AnimatedNumber from "../../components/AnimatedNumber";
+import MeuSaldo from "../../components/MeuSaldo";
+import FinanceiroPanel from "../../components/FinanceiroPanel";
 import { NAV_ICON, IconSearch, IconAlert, IconMoney, IconTrophy, IconUsers, IconTasks, IconClock, IconChevronRight, IconX, IconStar } from "../../components/icons";
 import { WEEKDAY_OPTIONS, weekdayPhrase } from "../../lib/weekday";
+import { SERVICE_OPTIONS } from "../../lib/services";
 
 const STATUS_LABEL = {
   ATIVO: "Ativo",
@@ -121,7 +125,7 @@ export default function Dashboard() {
   const [error, setError] = useState("");
   const [celebrating, setCelebrating] = useState(null);
 
-  const [newClient, setNewClient] = useState({ name: "", niche: "", plan: "", monthlyValue: "", gestorId: "", optimizationDay: "" });
+  const [newClient, setNewClient] = useState({ name: "", niche: "", plan: "", monthlyValue: "", gestorId: "", optimizationDay: "", services: [], otherServiceNote: "" });
   const [newTask, setNewTask] = useState({ title: "", clientId: "", gestorId: "", priority: "MEDIA", dueDate: "" });
   const [showNewClient, setShowNewClient] = useState(false);
   // Atalho de "minhas tarefas" dentro da aba Meus clientes — o sócio cria
@@ -204,6 +208,13 @@ export default function Dashboard() {
     }
   }
 
+  function toggleNewClientService(key) {
+    setNewClient((c) => ({
+      ...c,
+      services: c.services.includes(key) ? c.services.filter((s) => s !== key) : [...c.services, key],
+    }));
+  }
+
   async function createClient(e) {
     e.preventDefault();
     try {
@@ -216,7 +227,7 @@ export default function Dashboard() {
           optimizationDay: newClient.optimizationDay || null,
         },
       });
-      setNewClient({ name: "", niche: "", plan: "", monthlyValue: "", gestorId: "", optimizationDay: "" });
+      setNewClient({ name: "", niche: "", plan: "", monthlyValue: "", gestorId: "", optimizationDay: "", services: [], otherServiceNote: "" });
       setShowNewClient(false);
       loadAll();
     } catch (err) {
@@ -266,6 +277,8 @@ export default function Dashboard() {
   // particular") — essa aba dá a ele um recorte só com a carteira dele
   // mesmo, pra gerenciar sem misturar com a carteira inteira da agência.
   const canSeeMeusClientes = user ? user.role === "SOCIO" : false;
+  const canSeeFinanceiro = user ? user.role === "SOCIO" : false;
+  const canCreateClient = user ? (user.role === "SOCIO" || user.role === "GESTOR") : false;
 
   const ativos = clients.filter((c) => c.status === "ATIVO").length;
   const pendentesClientes = clients.filter((c) => c.status === "PENDENTE_PAGAMENTO");
@@ -276,7 +289,14 @@ export default function Dashboard() {
   // exatamente no dia marcado e some da lista assim que alguém clica em
   // "Marcar como feita" (isso empurra a data +7 dias automaticamente).
   const optimizacoesAtrasadas = clients.filter((c) => c.status === "ATIVO" && isOptimizationDue(c.nextOptimizationDate));
-  const mrr = clients.filter((c) => c.status === "ATIVO").reduce((sum, c) => sum + (Number(c.monthlyValue) || 0), 0);
+  // MRR/financeiro do painel conta todo cliente cadastrado pelo sócio (não
+  // cancelado) que já tem valor — não depende do status estar ATIVO, porque
+  // o pedido foi "assim que eu adicionar o cliente e o valor, já conta".
+  // Cliente antigo que um gestor cadastrou só pra registro (countsInFinance
+  // false) nunca entra nessa soma.
+  const mrr = clients
+    .filter((c) => c.countsInFinance !== false && c.status !== "CANCELADO")
+    .reduce((sum, c) => sum + (Number(c.monthlyValue) || 0), 0);
   const attentionCount = pendentesClientes.length + tarefasAtrasadas.length + optimizacoesAtrasadas.length;
 
   // Desempenho por gestor (só o sócio vê) — quantos clientes cada um carrega
@@ -337,6 +357,7 @@ export default function Dashboard() {
     canSeeCampanhas && { key: "campanhas", label: "Campanhas", icon: NAV_ICON.campanhas },
     canSeeRelatorios && { key: "relatorios", label: "Relatórios", icon: NAV_ICON.relatorios },
     canSeeAssistentes && { key: "assistentes", label: "Assistentes IA", icon: NAV_ICON.assistentes },
+    canSeeFinanceiro && { key: "financeiro", label: "Financeiro", icon: IconMoney },
     canSeeUsuarios && { key: "usuarios", label: "Usuários", icon: NAV_ICON.usuarios },
   ].filter(Boolean);
 
@@ -363,7 +384,7 @@ export default function Dashboard() {
         <>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             <StatCard icon={IconUsers} label="Clientes ativos" value={loading ? "—" : ativos} tone="accent" />
-            <StatCard icon={IconMoney} label={user.role === "SOCIO" ? "Receita mensal (MRR)" : "MRR da sua carteira"} value={loading ? "—" : currency(mrr)} tone="success" />
+            <StatCard icon={IconMoney} label={user.role === "SOCIO" ? "Receita mensal (MRR)" : "MRR da sua carteira"} value={loading ? "—" : <AnimatedNumber value={mrr} />} tone="success" />
             <StatCard icon={IconClock} label="Pendentes de pagamento" value={loading ? "—" : pendentesClientes.length} tone={pendentesClientes.length > 0 ? "warning" : "accent"} />
             <StatCard icon={IconTasks} label="Tarefas em aberto" value={loading ? "—" : tarefasAbertas} tone="accent" sub={tarefasAtrasadas.length > 0 ? `${tarefasAtrasadas.length} atrasada(s)` : undefined} />
             <StatCard icon={IconAlert} label="Otimizações vencidas" value={loading ? "—" : optimizacoesAtrasadas.length} tone={optimizacoesAtrasadas.length > 0 ? "danger" : "accent"} />
@@ -462,10 +483,13 @@ export default function Dashboard() {
       {tab === "meus-clientes" && canSeeMeusClientes && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <StatCard icon={IconStar} label="Meus clientes ativos" value={loading ? "—" : myClients.filter((c) => c.status === "ATIVO").length} tone="accent" />
-          <StatCard icon={IconMoney} label="MRR da minha carteira" value={loading ? "—" : currency(myClients.filter((c) => c.status === "ATIVO").reduce((s, c) => s + (Number(c.monthlyValue) || 0), 0))} tone="success" />
+          <StatCard icon={IconMoney} label="MRR da minha carteira" value={loading ? "—" : <AnimatedNumber value={myClients.filter((c) => c.countsInFinance !== false && c.status !== "CANCELADO").reduce((s, c) => s + (Number(c.monthlyValue) || 0), 0)} />} tone="success" />
           <StatCard icon={IconClock} label="Meus pendentes de pagamento" value={loading ? "—" : myClients.filter((c) => c.status === "PENDENTE_PAGAMENTO").length} tone="warning" />
         </div>
       )}
+
+      {tab === "meus-clientes" && canSeeMeusClientes && <MeuSaldo />}
+      {tab === "clientes" && user.role === "GESTOR" && <MeuSaldo />}
 
       {tab === "meus-clientes" && canSeeMeusClientes && (
         <div className="bg-surface border border-border rounded-2xl shadow-sm overflow-hidden">
@@ -514,7 +538,7 @@ export default function Dashboard() {
 
       {(tab === "clientes" || tab === "meus-clientes") && canSeeCarteira && (
         <section className="space-y-4">
-          {tab === "clientes" && user.role === "SOCIO" && (
+          {tab === "clientes" && canCreateClient && (
             <div className="bg-surface border border-border rounded-2xl shadow-sm overflow-hidden">
               <button onClick={() => setShowNewClient((v) => !v)}
                 className="w-full flex items-center justify-between px-4.5 py-3.5 text-left hover:bg-surface2/40 transition">
@@ -522,40 +546,74 @@ export default function Dashboard() {
                 <span className="text-xs text-accent font-medium">{showNewClient ? "Fechar" : "+ Adicionar"}</span>
               </button>
               {showNewClient && (
-                <form onSubmit={createClient} className="px-4.5 pb-4.5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5">
-                  <div className="lg:col-span-2">
-                    <label className="block text-[11px] text-inkfaint mb-1">Nome do cliente</label>
-                    <input required value={newClient.name} onChange={(e) => setNewClient({ ...newClient, name: e.target.value })}
-                      className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-border bg-surface2 text-ink" />
+                <form onSubmit={createClient} className="px-4.5 pb-4.5 space-y-2.5">
+                  {user.role === "GESTOR" && (
+                    <div className="text-[11.5px] text-inkfaint bg-surface2 border border-border rounded-lg px-3 py-2">
+                      Pra cadastrar cliente antigo na sua carteira — esse cadastro não entra no MRR/financeiro do painel do sócio.
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5">
+                    <div className="lg:col-span-2">
+                      <label className="block text-[11px] text-inkfaint mb-1">Nome do cliente</label>
+                      <input required value={newClient.name} onChange={(e) => setNewClient({ ...newClient, name: e.target.value })}
+                        className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-border bg-surface2 text-ink" />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-inkfaint mb-1">Nicho</label>
+                      <input value={newClient.niche} onChange={(e) => setNewClient({ ...newClient, niche: e.target.value })}
+                        className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-border bg-surface2 text-ink" />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-inkfaint mb-1">Plano</label>
+                      <input value={newClient.plan} onChange={(e) => setNewClient({ ...newClient, plan: e.target.value })}
+                        placeholder="R$ 297/mês" className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-border bg-surface2 text-ink" />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-inkfaint mb-1">Valor mensal (R$)</label>
+                      <input type="number" min="0" step="0.01" value={newClient.monthlyValue}
+                        onChange={(e) => setNewClient({ ...newClient, monthlyValue: e.target.value })}
+                        placeholder="297" className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-border bg-surface2 text-ink mono" />
+                    </div>
+                    {user.role === "SOCIO" && (
+                      <div>
+                        <label className="block text-[11px] text-inkfaint mb-1">Gestor</label>
+                        <select value={newClient.gestorId} onChange={(e) => setNewClient({ ...newClient, gestorId: e.target.value })}
+                          className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-border bg-surface2 text-ink">
+                          <option value="">—</option>
+                          {gestores.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                        </select>
+                      </div>
+                    )}
+                    <div>
+                      <label className="block text-[11px] text-inkfaint mb-1">Dia de otimização</label>
+                      <select value={newClient.optimizationDay}
+                        onChange={(e) => setNewClient({ ...newClient, optimizationDay: e.target.value })}
+                        className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-border bg-surface2 text-ink">
+                        <option value="">Selecione</option>
+                        {WEEKDAY_OPTIONS.map((w) => <option key={w.value} value={w.value}>{w.label}</option>)}
+                      </select>
+                    </div>
                   </div>
+
                   <div>
-                    <label className="block text-[11px] text-inkfaint mb-1">Nicho</label>
-                    <input value={newClient.niche} onChange={(e) => setNewClient({ ...newClient, niche: e.target.value })}
-                      className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-border bg-surface2 text-ink" />
+                    <label className="block text-[11px] text-inkfaint mb-1.5">Serviços contratados</label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {SERVICE_OPTIONS.map((s) => (
+                        <button key={s.key} type="button" onClick={() => toggleNewClientService(s.key)}
+                          className={`text-[12px] font-medium px-2.5 py-1.5 rounded-lg border transition ${newClient.services.includes(s.key)
+                            ? "bg-accent text-white border-accent"
+                            : "bg-surface2 text-inksoft border-border hover:border-accent/50"}`}>
+                          {s.label}
+                        </button>
+                      ))}
+                    </div>
+                    {newClient.services.includes("OUTRO") && (
+                      <input value={newClient.otherServiceNote} onChange={(e) => setNewClient({ ...newClient, otherServiceNote: e.target.value })}
+                        placeholder="Qual outro serviço?" className="mt-1.5 w-full max-w-sm px-2.5 py-1.5 text-sm rounded-lg border border-border bg-surface2 text-ink" />
+                    )}
                   </div>
-                  <div>
-                    <label className="block text-[11px] text-inkfaint mb-1">Plano</label>
-                    <input value={newClient.plan} onChange={(e) => setNewClient({ ...newClient, plan: e.target.value })}
-                      placeholder="R$ 297/mês" className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-border bg-surface2 text-ink" />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-inkfaint mb-1">Gestor</label>
-                    <select value={newClient.gestorId} onChange={(e) => setNewClient({ ...newClient, gestorId: e.target.value })}
-                      className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-border bg-surface2 text-ink">
-                      <option value="">—</option>
-                      {gestores.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-inkfaint mb-1">Dia de otimização</label>
-                    <select value={newClient.optimizationDay}
-                      onChange={(e) => setNewClient({ ...newClient, optimizationDay: e.target.value })}
-                      className="w-full px-2.5 py-1.5 text-sm rounded-lg border border-border bg-surface2 text-ink">
-                      <option value="">Selecione</option>
-                      {WEEKDAY_OPTIONS.map((w) => <option key={w.value} value={w.value}>{w.label}</option>)}
-                    </select>
-                  </div>
-                  <button className="bg-accent text-white text-sm font-medium py-1.5 rounded-lg hover:bg-accentink transition self-end">Adicionar</button>
+
+                  <button className="bg-accent text-white text-sm font-medium px-4 py-1.5 rounded-lg hover:bg-accentink transition">Adicionar</button>
                 </form>
               )}
             </div>
@@ -756,6 +814,7 @@ export default function Dashboard() {
       {tab === "campanhas" && canSeeCampanhas && <Campaigns />}
       {tab === "relatorios" && canSeeRelatorios && <Reports />}
       {tab === "assistentes" && canSeeAssistentes && <AIAssistants />}
+      {tab === "financeiro" && canSeeFinanceiro && <FinanceiroPanel />}
       {tab === "usuarios" && canSeeUsuarios && <UsersPanel />}
 
       {/* Painel rápido "quem é esse cliente" — aberto ao clicar no nome do

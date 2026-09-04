@@ -15,7 +15,7 @@ export default function UsersPanel() {
   const [users, setUsers] = useState([]);
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState({ name: "", email: "", password: "", role: "GESTOR", clientId: "" });
+  const [form, setForm] = useState({ name: "", email: "", cpf: "", phone: "", password: "", role: "GESTOR", clientId: "" });
   const [resetting, setResetting] = useState(null);
   const [resetPassword, setResetPassword] = useState("");
   const [editingId, setEditingId] = useState(null);
@@ -41,9 +41,13 @@ export default function UsersPanel() {
 
   async function createUser(e) {
     e.preventDefault();
+    if (form.role === "CLIENTE" && !form.email.trim() && !form.cpf.trim() && !form.phone.trim()) {
+      alert("Informe email, CPF ou telefone pra criar o login do cliente.");
+      return;
+    }
     try {
       await api("/api/users", { method: "POST", body: form });
-      setForm({ name: "", email: "", password: "", role: "GESTOR", clientId: "" });
+      setForm({ name: "", email: "", cpf: "", phone: "", password: "", role: "GESTOR", clientId: "" });
       load();
     } catch (err) {
       alert(err.message);
@@ -129,10 +133,24 @@ export default function UsersPanel() {
             className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink" />
         </div>
         <div>
-          <label className="block text-[11px] text-inkfaint mb-1">Email</label>
-          <input required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })}
+          <label className="block text-[11px] text-inkfaint mb-1">Email{form.role === "CLIENTE" ? " (opcional)" : ""}</label>
+          <input required={form.role !== "CLIENTE"} type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })}
             className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink" />
         </div>
+        {form.role === "CLIENTE" && (
+          <>
+            <div>
+              <label className="block text-[11px] text-inkfaint mb-1">CPF (opcional)</label>
+              <input value={form.cpf} onChange={(e) => setForm({ ...form, cpf: e.target.value })}
+                placeholder="000.000.000-00" className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink" />
+            </div>
+            <div>
+              <label className="block text-[11px] text-inkfaint mb-1">Telefone (opcional)</label>
+              <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                placeholder="(00) 00000-0000" className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink" />
+            </div>
+          </>
+        )}
         <div>
           <label className="block text-[11px] text-inkfaint mb-1">Senha</label>
           <input required type="text" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
@@ -191,7 +209,7 @@ export default function UsersPanel() {
                       )}
                       <div className="min-w-0">
                         <div className="font-medium text-ink truncate">{u.name}</div>
-                        <div className="text-xs text-inkfaint truncate">{u.email}</div>
+                        <div className="text-xs text-inkfaint truncate">{u.email || u.cpf || u.phone || "—"}</div>
                       </div>
                     </div>
                   </td>
