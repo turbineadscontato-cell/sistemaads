@@ -161,6 +161,17 @@ export default function Dashboard() {
     }
     setUser(u);
     setTab(u.role === "ATENDENTE" ? "atendimento" : "clientes");
+    // O usuário salvo no navegador (localStorage) é uma "foto" de quando essa
+    // pessoa fez login — se o sócio mudar o próprio nível/avatar depois (ex:
+    // na tela de Usuários), quem já está logado só via essa mudança refletida
+    // de verdade após relogar. Pra evitar essa dessincronia (ex: menu lateral
+    // mostrando um nível antigo enquanto o resto do painel já mostra o novo),
+    // busca os dados atuais do próprio usuário assim que o painel abre e
+    // atualiza tanto o estado quanto o que fica salvo no navegador.
+    api("/api/auth/me").then((fresh) => {
+      const merged = updateStoredUser(fresh);
+      if (merged) setUser(merged);
+    }).catch(() => {});
   }, [router]);
 
   const loadAll = useCallback(async () => {
