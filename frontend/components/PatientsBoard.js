@@ -119,11 +119,37 @@ function computeScheduleClientSide(form) {
   return { total, dates, completed };
 }
 
-const EMPTY_FORM = { name: "", contact: "", sessionValue: "", paymentDueDay: "", paymentStatus: "EM_DIA", nextSessionAt: "", notes: "", weekdays: [], sessionTime: "" };
+const EMPTY_FORM_BASE = { name: "", contact: "", sessionValue: "", paymentDueDay: "", paymentStatus: "EM_DIA", nextSessionAt: "", notes: "", weekdays: [], sessionTime: "", packageTotalSessions: "", packageStartDate: "" };
+function todayDateOnly() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+}
+// Fresh copy of the empty form each time — packageStartDate defaults to
+// "hoje" since a brand-new patient has no createdAt yet to fall back on
+// (unlike the edit modal, which defaults to the patient's own createdAt).
+function emptyPatientForm() {
+  return { ...EMPTY_FORM_BASE, packageStartDate: todayDateOnly() };
+}
 
 function toggleDay(list, day) {
   return list.includes(day) ? list.filter((d) => d !== day) : [...list, day].sort();
 }
+
+// Traffic-light indicator for "hora de renovar o pacote" — read straight off
+// the sessionSchedule the backend already computes per patient (remaining =
+// total - completed). Reuses the same success/warning/danger tokens as
+// DOT_CLASS in app/dashboard/page.js, so a professional glancing at the
+// board or the portal gets a consistent visual language across the system.
+function packageStatus(p) {
+  const sched = p?.sessionSchedule;
+  if (!sched || !sched.total) return null;
+  const remaining = sched.remaining;
+  if (remaining <= 0) return { tone: "danger", label: "Pacote esgotado — hora de renovar" };
+  if (remaining === 1) return { tone: "warning", label: "Última sessão do pacote — hora de renovar" };
+  return { tone: "success", label: `${remaining} sessões restantes no pacote` };
+}
+const DOT_CLASS = { success: "bg-success", warning: "bg-warning", danger: "bg-danger" };
 
 export default function PatientsBoard() {
   const [patients, setPatients] = useState([]);
@@ -131,7 +157,7 @@ export default function PatientsBoard() {
   const [error, setError] = useState("");
   const [view, setView] = useState("status"); // status | agenda
   const [showNew, setShowNew] = useState(false);
-  const [newForm, setNewForm] = useState(EMPTY_FORM);
+  const [newForm, setNewForm] = useState(emptyPatientForm);
   const [expandedId, setExpandedId] = useState(null);
   const [editForm, setEditForm] = useState(null);
   const [notesById, setNotesById] = useState({});
@@ -176,9 +202,14 @@ export default function PatientsBoard() {
           paymentDueDay: newForm.paymentDueDay || undefined,
           nextSessionAt: newForm.nextSessionAt || undefined,
           sessionTime: newForm.sessionTime || undefined,
+          // Só manda o pacote se a quantidade foi preenchida — sem isso o
+          // paciente é criado normalmente, sem pacote (pode ser definido
+          // depois, no modal de edição).
+          packageTotalSessions: newForm.packageTotalSessions || undefined,
+          packageStartDate: newForm.packageTotalSessions ? (newForm.packageStartDate || undefined) : undefined,
         },
       });
-      setNewForm(EMPTY_FORM);
+      setNewForm(emptyPatientForm());
       setShowNew(false);
       load();
     } catch (err) {
@@ -478,7 +509,9 @@ export default function PatientsBoard() {
         </button>
       </div>
 
-      {showNew && (
+      {showNew && (() => {
+        const newSchedule = computeScheduleClientSide(newForm);
+        return (
         <form onSubmit={createPatient} className="bg-surface border border-border rounded-xl shadow-sm p-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
           <input required placeholder="Nome do paciente" value={newForm.name} onChange={(e) => setNewForm({ ...newForm, name: e.target.value })}
             className="px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink sm:col-span-1" />
@@ -507,11 +540,46 @@ export default function PatientsBoard() {
               ))}
             </div>
           </div>
+
+          <div className="sm:col-span-3 border-t border-border pt-2.5 mt-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[11px] text-inkfaint mb-1">Quantas sessões tem o pacote? (opcional)</label>
+              <input type="number" min="1" placeholder="Ex: 4" value={newForm.packageTotalSessions}
+                onChange={(e) => setNewForm({ ...newForm, packageTotalSessions: e.target.value })}
+                className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink mono" />
+            </div>
+            <div>
+              <label className="block text-[11px] text-inkfaint mb-1">Início do pacote</label>
+              <input type="date" value={newForm.packageStartDate}
+                onChange={(e) => setNewForm({ ...newForm, packageStartDate: e.target.value })}
+                className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink mono" />
+            </div>
+            <div className="sm:col-span-2 text-[11px] text-inkfaint leading-relaxed">
+              {newForm.packageTotalSessions
+                ? "As datas de cada sessão são calculadas automaticamente com base nos dias de atendimento marcados acima."
+                : "Se preencher a quantidade, as datas das sessões já são geradas ao cadastrar o paciente."}
+            </div>
+            {newSchedule && (
+              <div className="sm:col-span-2 bg-surface2/60 border border-border rounded-lg px-3 py-2.5 space-y-1.5 max-h-32 overflow-y-auto">
+                {newSchedule.dates.map((d, i) => (
+                  <div key={d} className="flex items-center justify-between gap-3 text-[12px] text-ink">
+                    <span>Sessão {i + 1}</span>
+                    <span className="mono flex items-center gap-2">
+                      <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-accentsoft text-accent font-semibold">{fmtScheduleWeekday(d)}</span>
+                      {fmtScheduleDateTime(d)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <button className="bg-accent text-white text-sm font-medium px-3 py-1.5 rounded-md hover:bg-accentink sm:col-span-3">
             Adicionar paciente
           </button>
         </form>
-      )}
+        );
+      })()}
 
       {view === "status" && (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -529,7 +597,12 @@ export default function PatientsBoard() {
                   return (
                     <div key={p.id} className={`border rounded-xl bg-surface2 overflow-hidden transition ${expanded ? "border-accent shadow-[0_0_0_1px_rgba(255,122,26,0.4)]" : "border-border"}`}>
                       <button onClick={() => openCard(p)} className="w-full text-left px-3 py-2.5 hover:bg-white/[0.03] transition">
-                        <div className="text-sm text-ink font-medium truncate">{p.name}</div>
+                        <div className="text-sm text-ink font-medium truncate flex items-center gap-1.5">
+                          {packageStatus(p) && (
+                            <span title={packageStatus(p).label} className={`inline-block w-2 h-2 rounded-full shrink-0 ${DOT_CLASS[packageStatus(p).tone]}`} />
+                          )}
+                          <span className="truncate">{p.name}</span>
+                        </div>
                         <div className="flex items-center flex-wrap gap-1.5 mt-1">
                           {p.nextSessionAt && (
                             <span className="text-[10px] mono text-inksoft">{fmtDateTime(p.nextSessionAt)}</span>
@@ -639,7 +712,17 @@ export default function PatientsBoard() {
                 </div>
 
                 <div className="bg-surface2/60 border border-border/70 rounded-2xl p-4 sm:p-5 space-y-3.5">
-                  <div className="text-[11px] font-semibold uppercase tracking-wider text-inkfaint">Pacote de sessões contratadas</div>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-inkfaint">Pacote de sessões contratadas</div>
+                    {packageStatus(p) && (
+                      <span className={`inline-flex items-center gap-1.5 text-[11.5px] font-medium px-2.5 py-1 rounded-full ${
+                        packageStatus(p).tone === "danger" ? "bg-dangersoft text-danger" : packageStatus(p).tone === "warning" ? "bg-warningsoft text-warning" : "bg-successsoft text-success"
+                      }`}>
+                        <span className={`inline-block w-2 h-2 rounded-full ${DOT_CLASS[packageStatus(p).tone]}`} />
+                        {packageStatus(p).label}
+                      </span>
+                    )}
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[11px] text-inkfaint mb-1.5">Quantidade de sessões</label>

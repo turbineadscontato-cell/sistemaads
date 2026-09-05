@@ -9,6 +9,7 @@ import ClientFiles from "../../components/ClientFiles";
 import ClientReports from "../../components/ClientReports";
 import ClientLeadsBoard from "../../components/ClientLeadsBoard";
 import PatientsBoard from "../../components/PatientsBoard";
+import PatientsFinance from "../../components/PatientsFinance";
 import PatientLogins from "../../components/PatientLogins";
 import ContentCalendar from "../../components/ContentCalendar";
 import ClientMarketingAI from "../../components/ClientMarketingAI";
@@ -27,6 +28,7 @@ const TABS = [
   { key: "geral", label: "Visão geral" },
   { key: "ia", label: "IA de Marketing" },
   { key: "pacientes", label: "Pacientes" },
+  { key: "financeiro", label: "Financeiro" },
   { key: "acessos", label: "Acessos dos pacientes" },
   { key: "conteudo", label: "Calendário de conteúdo" },
   { key: "leads", label: "Meus leads" },
@@ -248,6 +250,7 @@ export default function ClientPortal() {
 
         {tab === "ia" && <ClientMarketingAI />}
         {tab === "pacientes" && <PatientsBoard />}
+        {tab === "financeiro" && <PatientsFinance />}
         {tab === "acessos" && <PatientLogins />}
         {tab === "conteudo" && <ContentCalendar clientId={client.id} />}
         {tab === "leads" && <ClientLeadsBoard clientId={client.id} canEdit />}
