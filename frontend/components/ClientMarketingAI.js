@@ -1,7 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
+import { renderMarkdownLite } from "../lib/markdownLite";
+
+const REVEAL_TOTAL_MS = 900;
+const REVEAL_MIN_STEP_MS = 12;
 
 const TABS = [
   { key: "chat", label: "Assistente de Marketing" },
@@ -27,10 +31,61 @@ export default function ClientMarketingAI() {
   const [tab, setTab] = useState("chat");
 
   // Chat state
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState(null); // null = ainda não carregado do histórico salvo
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [chatError, setChatError] = useState("");
+  const [reveal, setReveal] = useState(null); // { full, shown } — efeito de "digitando" ao mostrar a resposta
+  const scrollRef = useRef(null);
+  const revealTimer = useRef(null);
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const res = await api("/api/ai/history?mode=client_marketing");
+      setMessages(res.messages || []);
+    } catch {
+      setMessages([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, [messages, reveal, sending]);
+
+  useEffect(() => () => clearInterval(revealTimer.current), []);
+
+  function startReveal(fullText) {
+    clearInterval(revealTimer.current);
+    const len = fullText.length;
+    const stepMs = Math.max(REVEAL_MIN_STEP_MS, REVEAL_TOTAL_MS / Math.max(len, 1));
+    const chunksNeeded = Math.max(1, Math.ceil(REVEAL_TOTAL_MS / stepMs));
+    const step = Math.max(1, Math.ceil(len / chunksNeeded));
+    let shown = 0;
+    setReveal({ full: fullText, shown: 0 });
+    revealTimer.current = setInterval(() => {
+      shown = Math.min(len, shown + step);
+      setReveal({ full: fullText, shown });
+      if (shown >= len) {
+        clearInterval(revealTimer.current);
+        setMessages((m) => [...(m || []), { role: "assistant", displayText: fullText }]);
+        setReveal(null);
+      }
+    }, stepMs);
+  }
+
+  async function clearConversation() {
+    if (!confirm("Limpar essa conversa? O histórico salvo vai ser apagado.")) return;
+    try {
+      await api("/api/ai/history?mode=client_marketing", { method: "DELETE" });
+      setMessages([]);
+    } catch (err) {
+      setChatError(err.message);
+    }
+  }
 
   // Instagram analysis state
   const [igForm, setIgForm] = useState({ handle: "", followers: "", bio: "", niche: "", approach: "", extraNotes: "" });
@@ -42,19 +97,18 @@ export default function ClientMarketingAI() {
   async function send(e) {
     e.preventDefault();
     if (!input.trim() || sending) return;
-    const userMsg = { role: "user", content: input.trim() };
-    const next = [...messages, userMsg];
-    setMessages(next);
+    const text = input.trim();
+    setMessages((m) => [...(m || []), { role: "user", displayText: text }]);
     setInput("");
     setSending(true);
     setChatError("");
     try {
-      const res = await api("/api/ai/chat", { method: "POST", body: { mode: "client_marketing", messages: next } });
-      setMessages((m) => [...m, { role: "assistant", content: res.text }]);
-    } catch (err) {
-      setChatError(err.message);
-    } finally {
+      const res = await api("/api/ai/chat", { method: "POST", body: { mode: "client_marketing", message: text, displayText: text } });
       setSending(false);
+      startReveal(res.text);
+    } catch (err) {
+      setSending(false);
+      setChatError(err.message);
     }
   }
 
@@ -106,29 +160,50 @@ export default function ClientMarketingAI() {
 
       {tab === "chat" && (
         <div className="max-w-3xl space-y-2">
-          <p className="text-xs text-inkfaint">
-            Peça scripts de vendas, ideias de conteúdo, estratégias de marketing, ajuda com posicionamento e preço, ou qualquer dúvida de marketing digital.
-          </p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs text-inkfaint">
+              Peça scripts de vendas, ideias de conteúdo, estratégias de marketing, ajuda com posicionamento e preço, ou qualquer dúvida de marketing digital.
+            </p>
+            {messages?.length > 0 && (
+              <button onClick={clearConversation} className="text-[11px] text-inkfaint hover:text-danger transition shrink-0">
+                Limpar conversa
+              </button>
+            )}
+          </div>
           <div className="bg-surface border border-border rounded-xl shadow-sm flex flex-col h-[480px]">
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {messages.length === 0 && (
+            <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
+              {messages === null && <div className="text-xs text-inkfaint">Carregando conversa…</div>}
+              {messages?.length === 0 && !reveal && (
                 <div className="text-xs text-inkfaint">
                   Ex.: &ldquo;me dá um script de WhatsApp para responder quem chegou pelo anúncio&rdquo; ou &ldquo;quais conteúdos eu posso postar essa semana?&rdquo;
                 </div>
               )}
-              {messages.map((m, i) => (
-                <div key={i}
-                  className={`text-sm rounded-lg px-3 py-2 max-w-[85%] whitespace-pre-wrap ${m.role === "user" ? "ml-auto bg-accent text-white" : "bg-surface2 text-ink"}`}>
-                  {m.content}
+              {messages?.map((m, i) => (
+                <div key={m.id || i}
+                  className={`text-sm rounded-2xl px-3.5 py-2.5 max-w-[85%] leading-relaxed ${m.role === "user" ? "ml-auto bg-accent text-white" : "bg-surface2 text-ink"}`}>
+                  {m.role === "user"
+                    ? <span className="whitespace-pre-wrap">{m.displayText}</span>
+                    : <div className="space-y-1.5">{renderMarkdownLite(m.displayText)}</div>}
                 </div>
               ))}
-              {sending && <div className="text-xs text-inkfaint">Pensando…</div>}
+              {reveal && (
+                <div className="text-sm rounded-2xl px-3.5 py-2.5 max-w-[85%] leading-relaxed bg-surface2 text-ink">
+                  <div className="space-y-1.5">{renderMarkdownLite(reveal.full.slice(0, reveal.shown))}</div>
+                </div>
+              )}
+              {sending && !reveal && (
+                <div className="flex items-center gap-1 px-3.5 py-2.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-inkfaint animate-bounce [animation-delay:-0.3s]" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-inkfaint animate-bounce [animation-delay:-0.15s]" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-inkfaint animate-bounce" />
+                </div>
+              )}
               {chatError && <div className="text-xs text-danger bg-dangersoft border border-danger/30 rounded-lg px-3 py-2">{chatError}</div>}
             </div>
             <form onSubmit={send} className="flex gap-2 p-3 border-t border-border">
               <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Escreva sua pergunta…"
                 className="flex-1 px-3 py-2 text-sm rounded-md border border-border bg-surface2 text-ink" />
-              <button disabled={sending} className="bg-accent text-white text-sm font-medium px-4 rounded-md hover:bg-accentink disabled:opacity-60">
+              <button disabled={sending || !!reveal} className="bg-accent text-white text-sm font-medium px-4 rounded-md hover:bg-accentink disabled:opacity-60">
                 Enviar
               </button>
             </form>

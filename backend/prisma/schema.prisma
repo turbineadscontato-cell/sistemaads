@@ -81,6 +81,7 @@ model User {
   // solicitações de saque/retirada de saldo — ver modelos abaixo.
   commissions    Commission[]
   withdrawals    WithdrawalRequest[]
+  aiMessages     AiMessage[]
 
   // Set only for role = CLIENTE: which client's portal this login can see.
   clientId String?
@@ -443,4 +444,32 @@ model AdAccount {
 
   clientId String?
   client   Client? @relation(fields: [clientId], references: [id])
+}
+
+// Histórico persistido dos Assistentes IA (Estratégia de Tráfego, Nicho
+// Terapia, e o assistente de marketing do cliente) — uma linha por
+// mensagem, por usuário, por "modo" (assistente). Antes disso o histórico
+// só vivia no navegador (useState), sumindo a cada F5/troca de aba; agora
+// cada assistente lembra a conversa de onde parou.
+model AiMessage {
+  id           String   @id @default(cuid())
+  assistantKey String // "traffic" | "therapy" | "client_marketing"
+  role         String // "user" | "assistant"
+  // Conteúdo enviado/recebido da API da Anthropic, serializado em JSON
+  // (string simples ou array de content blocks, quando tem anexo). Ao
+  // recarregar o histórico pra dar contexto pra IA, anexos de turnos
+  // antigos são trocados por um resumo curto (ver ai.js) — só o anexo do
+  // turno mais recente é reenviado por completo, pra não inflar tokens/
+  // custo indefinidamente numa conversa longa.
+  content      String   @db.Text
+  // Texto simples só pra exibir na bolha do chat (não vai pra API) —
+  // evita re-renderizar base64 de imagem ou o texto bruto de uma planilha
+  // anexada.
+  displayText  String?  @db.Text
+  createdAt    DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, assistantKey, createdAt])
 }
