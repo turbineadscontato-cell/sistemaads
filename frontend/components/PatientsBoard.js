@@ -119,7 +119,7 @@ function computeScheduleClientSide(form) {
   return { total, dates, completed };
 }
 
-const EMPTY_FORM_BASE = { name: "", contact: "", sessionValue: "", paymentDueDay: "", paymentStatus: "EM_DIA", nextSessionAt: "", notes: "", weekdays: [], sessionTime: "", packageTotalSessions: "", packageStartDate: "" };
+const EMPTY_FORM_BASE = { name: "", contact: "", sessionValue: "", paymentDueDay: "", paymentStatus: "EM_DIA", nextSessionAt: "", notes: "", weekdays: [], sessionTime: "", packageTotalSessions: "", packageStartDate: "", loginEmail: "", loginPassword: "", meetLink: "" };
 function todayDateOnly() {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, "0");
@@ -194,7 +194,7 @@ export default function PatientsBoard() {
     e.preventDefault();
     if (!newForm.name.trim()) return;
     try {
-      await api("/api/patients", {
+      const created = await api("/api/patients", {
         method: "POST",
         body: {
           ...newForm,
@@ -209,6 +209,19 @@ export default function PatientsBoard() {
           packageStartDate: newForm.packageTotalSessions ? (newForm.packageStartDate || undefined) : undefined,
         },
       });
+      // Se o profissional já preencheu email + senha, cria o login do
+      // paciente na mesma tacada — sem isso, ele teria que ir depois na aba
+      // "Acessos dos pacientes" pra fazer esse segundo passo separado.
+      if (newForm.loginEmail.trim() && newForm.loginPassword.trim()) {
+        try {
+          await api(`/api/patients/${created.id}/portal-user`, {
+            method: "POST",
+            body: { name: created.name, email: newForm.loginEmail.trim(), password: newForm.loginPassword.trim() },
+          });
+        } catch (loginErr) {
+          alert(`Paciente cadastrado, mas não foi possível criar o login: ${loginErr.message}\n\nVocê pode criar o login depois na aba "Acessos dos pacientes".`);
+        }
+      }
       setNewForm(emptyPatientForm());
       setShowNew(false);
       load();
@@ -572,6 +585,32 @@ export default function PatientsBoard() {
                 ))}
               </div>
             )}
+          </div>
+
+          <div className="sm:col-span-3 border-t border-border pt-2.5 mt-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="sm:col-span-2 text-[11px] font-semibold uppercase tracking-wider text-inkfaint">Acesso do paciente ao portal (opcional)</div>
+            <input type="email" placeholder="Email do paciente" autoComplete="off" value={newForm.loginEmail}
+              onChange={(e) => setNewForm({ ...newForm, loginEmail: e.target.value })}
+              className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink" />
+            <input placeholder="Senha" autoComplete="off" value={newForm.loginPassword}
+              onChange={(e) => setNewForm({ ...newForm, loginPassword: e.target.value })}
+              className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink" />
+            <div className="sm:col-span-2 text-[11px] text-inkfaint leading-relaxed">
+              Preenchendo os dois, o login já é criado junto com o paciente. Se deixar em branco, dá pra criar depois na aba "Acessos dos pacientes".
+            </div>
+          </div>
+
+          <div className="sm:col-span-3 border-t border-border pt-2.5 mt-1 space-y-1.5">
+            <label className="block text-[11px] font-semibold uppercase tracking-wider text-inkfaint">Sessão por vídeo (Google Meet) — opcional</label>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input value={newForm.meetLink} onChange={(e) => setNewForm({ ...newForm, meetLink: e.target.value })} placeholder="Cole aqui o link gerado no Meet"
+                className="flex-1 min-w-0 px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink" />
+              <button type="button" onClick={() => window.open("https://meet.google.com/new", "_blank", "noopener,noreferrer")}
+                className="text-[12.5px] shrink-0 border border-border rounded-md px-3 py-1.5 text-inksoft hover:border-accent hover:text-accent transition font-medium">
+                Gerar no Meet
+              </button>
+            </div>
+            <div className="text-[11px] text-inkfaint">Clique em "Gerar no Meet" pra abrir uma sala nova, copie o link e cole aqui — ou deixe em branco e defina depois.</div>
           </div>
 
           <button className="bg-accent text-white text-sm font-medium px-3 py-1.5 rounded-md hover:bg-accentink sm:col-span-3">
