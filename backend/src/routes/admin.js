@@ -17,6 +17,67 @@ const { requireAuth, requireRole } = require("../middleware/auth");
 const router = express.Router();
 router.use(requireAuth, requireRole("SOCIO"));
 
+// --------------------------------------------------------------------------
+// AUDITORIA (fase 3, seção 40 do pedido) — em vez de instrumentar cada rota
+// de criação/edição/exclusão uma por uma, um único middleware intercepta
+// toda resposta de sucesso (status < 400) de qualquer POST/PATCH/DELETE
+// dentro de /api/admin/* e grava uma linha no log. Cobre automaticamente
+// as rotas já existentes (Receitas, Despesas, Contratos, Equipe,
+// Ferramentas, Fornecedores, Folha) e qualquer rota nova adicionada depois,
+// sem precisar lembrar de logar manualmente em cada uma. Não existe
+// nenhuma rota de exclusão desse log — nem o sócio apaga pela UI.
+// --------------------------------------------------------------------------
+
+const AUDIT_ENTITY_LABEL = {
+  receitas: "Receita",
+  despesas: "Despesa",
+  contratos: "Contrato",
+  equipe: "Membro da equipe",
+  ferramentas: "Ferramenta/Assinatura",
+  fornecedores: "Fornecedor",
+  folha: "Pagamento de folha",
+  metas: "Meta",
+  reunioes: "Reunião de sócios",
+  "distribuicao-lucros": "Distribuição de lucros",
+  "pro-labore": "Pró-labore",
+  "reserva-financeira": "Reserva financeira",
+};
+
+function auditSummaryFrom(body) {
+  if (!body || typeof body !== "object") return "";
+  const label = body.description || body.title || body.name || (body.status ? `status: ${body.status}` : "");
+  return String(label).slice(0, 200);
+}
+
+router.use((req, res, next) => {
+  if (!["POST", "PATCH", "DELETE"].includes(req.method)) return next();
+  const firstSegment = req.path.split("/").filter(Boolean)[0];
+  const entity = AUDIT_ENTITY_LABEL[firstSegment];
+  if (!entity) return next();
+
+  const originalJson = res.json.bind(res);
+  res.json = (body) => {
+    if (res.statusCode < 400) {
+      const action = req.method === "POST" ? "CRIAÇÃO" : req.method === "DELETE" ? "EXCLUSÃO/CANCELAMENTO" : "EDIÇÃO";
+      const entityId = (body && body.id) || req.params.id || null;
+      const summary = auditSummaryFrom(body);
+      prisma.adminAuditLog
+        .create({
+          data: {
+            action,
+            entity,
+            entityId,
+            summary: `${action} — ${entity}${summary ? `: ${summary}` : ""}`,
+            userId: req.user?.id || null,
+          },
+        })
+        .catch(() => {}); // auditoria nunca deve travar a resposta principal
+    }
+    return originalJson(body);
+  };
+  next();
+});
+
 // Comprovante de despesa em base64 — mesmo teto (com folga) já usado pro
 // anexo de relatório do Meta em ClientMetricEntry.
 const MAX_RECEIPT_B64_CHARS = 8_000_000;
@@ -1197,6 +1258,438 @@ router.delete("/fornecedores/:id", async (req, res) => {
   if (!existing) return res.status(404).json({ error: "Fornecedor não encontrado." });
   const updated = await prisma.adminSupplier.update({ where: { id: req.params.id }, data: { status: "INATIVO" } });
   res.json(updated);
+});
+
+// ==========================================================================
+// FASE 3 (07/09/2026): Pró-labore, Distribuição de Lucros, Reserva
+// Financeira, Metas, Reunião de Sócios e Relatórios exportáveis. Auditoria
+// já está coberta pelo middleware lá em cima — aqui só a rota de leitura.
+// ==========================================================================
+
+const XLSX = require("xlsx");
+
+// ---------------------------------------------------------------------
+// AUDITORIA — só leitura, sem nenhuma rota de exclusão.
+// ---------------------------------------------------------------------
+
+router.get("/auditoria", async (req, res) => {
+  const { entity, limit } = req.query;
+  const where = {};
+  if (entity) where.entity = entity;
+  const rows = await prisma.adminAuditLog.findMany({
+    where,
+    include: { user: { select: { id: true, name: true } } },
+    orderBy: { createdAt: "desc" },
+    take: Math.min(Number(limit) || 200, 500),
+  });
+  res.json(
+    rows.map((r) => ({
+      id: r.id,
+      action: r.action,
+      entity: r.entity,
+      entityId: r.entityId,
+      summary: r.summary,
+      createdAt: r.createdAt,
+      user: r.user ? r.user.name : "—",
+    }))
+  );
+});
+
+// ---------------------------------------------------------------------
+// PRÓ-LABORE — separado de Distribuição de Lucros (seção 20/21 do pedido).
+// Reaproveita AdminExpense (categoria "Pró-labore", já existente) pro
+// lançamento em si, igual ao padrão já usado na Folha de pagamentos.
+// ---------------------------------------------------------------------
+
+router.get("/pro-labore", async (req, res) => {
+  const { month } = req.query;
+  const { start, end, key } = monthRange(month);
+  const socios = await prisma.user.findMany({ where: { role: "SOCIO" }, select: { id: true, name: true } });
+  const settings = await prisma.adminPartnerSettings.findMany({ where: { userId: { in: socios.map((s) => s.id) } } });
+  const settingsByUser = new Map(settings.map((s) => [s.userId, s]));
+
+  const expenses = await prisma.adminExpense.findMany({
+    where: { category: "Pró-labore", OR: [{ dueDate: { gte: start, lte: end } }, { date: { gte: start, lte: end } }] },
+  });
+
+  const rows = socios.map((s) => {
+    const cfg = settingsByUser.get(s.id);
+    const lanc = expenses.find((e) => (e.responsible || "").trim().toLowerCase() === s.name.trim().toLowerCase());
+    return {
+      userId: s.id,
+      name: s.name,
+      proLaboreValue: cfg?.proLaboreValue ?? null,
+      proLaboreDay: cfg?.proLaboreDay ?? null,
+      lancamento: lanc ? { id: lanc.id, status: deriveStatus(lanc.status, lanc.dueDate), amount: lanc.amount, dueDate: lanc.dueDate, paidDate: lanc.paidDate } : null,
+    };
+  });
+  res.json({ month: key, rows });
+});
+
+router.patch("/pro-labore/:userId", async (req, res) => {
+  const user = await prisma.user.findUnique({ where: { id: req.params.userId }, select: { id: true, role: true } });
+  if (!user || user.role !== "SOCIO") return res.status(400).json({ error: "Sócio não encontrado." });
+  const { proLaboreValue, proLaboreDay, notes } = req.body || {};
+  const data = {
+    proLaboreValue: proLaboreValue != null && proLaboreValue !== "" ? Number(proLaboreValue) : null,
+    proLaboreDay: proLaboreDay ? Number(proLaboreDay) : null,
+    notes: notes || null,
+  };
+  const updated = await prisma.adminPartnerSettings.upsert({
+    where: { userId: req.params.userId },
+    update: data,
+    create: { ...data, userId: req.params.userId },
+  });
+  res.json(updated);
+});
+
+router.post("/pro-labore/:userId/lancar", async (req, res) => {
+  const user = await prisma.user.findUnique({ where: { id: req.params.userId }, select: { id: true, name: true, role: true } });
+  if (!user || user.role !== "SOCIO") return res.status(400).json({ error: "Sócio não encontrado." });
+  const settings = await prisma.adminPartnerSettings.findUnique({ where: { userId: user.id } });
+  const { month, amount } = req.body || {};
+  const effectiveAmount = amount != null && amount !== "" ? Number(amount) : settings?.proLaboreValue;
+  if (!effectiveAmount || effectiveAmount <= 0) return res.status(400).json({ error: "Defina um valor de pró-labore válido pra esse sócio." });
+
+  const { start, end, key } = monthRange(month);
+  const already = await prisma.adminExpense.findFirst({
+    where: { category: "Pró-labore", responsible: { equals: user.name, mode: "insensitive" }, OR: [{ dueDate: { gte: start, lte: end } }, { date: { gte: start, lte: end } }] },
+  });
+  if (already) return res.status(400).json({ error: `O pró-labore de ${key} já foi lançado pra ${user.name}.` });
+
+  const lastDay = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0)).getUTCDate();
+  const day = Math.min(settings?.proLaboreDay || 5, lastDay);
+  const dueDate = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), day));
+
+  const created = await prisma.adminExpense.create({
+    data: {
+      description: `Pró-labore — ${user.name} (${key})`,
+      category: "Pró-labore",
+      amount: effectiveAmount,
+      dueDate,
+      responsible: user.name,
+      status: "PENDENTE",
+      createdById: req.user.id,
+    },
+  });
+  res.status(201).json({ ...serializeExpense(created), receiptBase64: null });
+});
+
+// ---------------------------------------------------------------------
+// DISTRIBUIÇÃO DE LUCROS — sempre um valor decidido manualmente pelo
+// sócio, nunca calculado sozinho a partir do saldo bancário inteiro
+// (seção 21 do pedido: "nunca considerar automaticamente todo o saldo
+// bancário como lucro disponível"). O saldo atual é só informativo aqui,
+// vindo do mesmo cálculo do Fluxo de Caixa — a decisão de quanto distribuir
+// é sempre digitada por quem estiver lançando.
+// ---------------------------------------------------------------------
+
+router.get("/distribuicao-lucros", async (req, res) => {
+  const rows = await prisma.adminProfitDistribution.findMany({
+    include: { createdBy: { select: { name: true } }, shares: { include: { user: { select: { id: true, name: true } } } } },
+    orderBy: { createdAt: "desc" },
+  });
+  res.json(
+    rows.map((d) => ({
+      id: d.id,
+      referenceMonth: d.referenceMonth,
+      totalAmount: d.totalAmount,
+      notes: d.notes,
+      createdAt: d.createdAt,
+      createdBy: d.createdBy?.name || "—",
+      shares: d.shares.map((s) => ({ id: s.id, userId: s.userId, name: s.user.name, amount: s.amount, paidDate: s.paidDate })),
+    }))
+  );
+});
+
+router.post("/distribuicao-lucros", async (req, res) => {
+  const { referenceMonth, totalAmount, notes, shares } = req.body || {};
+  if (!referenceMonth) return res.status(400).json({ error: "Informe o mês de referência." });
+  const total = Number(totalAmount);
+  if (!total || total <= 0) return res.status(400).json({ error: "Informe um valor total válido pra distribuir." });
+  if (!Array.isArray(shares) || shares.length === 0) return res.status(400).json({ error: "Informe pelo menos uma parcela por sócio." });
+
+  const socios = await prisma.user.findMany({ where: { role: "SOCIO" }, select: { id: true } });
+  const socioIds = new Set(socios.map((s) => s.id));
+  for (const s of shares) {
+    if (!socioIds.has(s.userId)) return res.status(400).json({ error: "Sócio inválido numa das parcelas." });
+    if (!s.amount || Number(s.amount) <= 0) return res.status(400).json({ error: "Cada parcela precisa de um valor válido." });
+  }
+
+  const created = await prisma.adminProfitDistribution.create({
+    data: {
+      referenceMonth: String(referenceMonth),
+      totalAmount: total,
+      notes: notes || null,
+      createdById: req.user.id,
+      shares: { create: shares.map((s) => ({ userId: s.userId, amount: Number(s.amount) })) },
+    },
+    include: { createdBy: { select: { name: true } }, shares: { include: { user: { select: { id: true, name: true } } } } },
+  });
+  res.status(201).json({
+    id: created.id,
+    referenceMonth: created.referenceMonth,
+    totalAmount: created.totalAmount,
+    notes: created.notes,
+    createdAt: created.createdAt,
+    createdBy: created.createdBy?.name || "—",
+    shares: created.shares.map((s) => ({ id: s.id, userId: s.userId, name: s.user.name, amount: s.amount, paidDate: s.paidDate })),
+  });
+});
+
+// ---------------------------------------------------------------------
+// RESERVA FINANCEIRA — meta em meses de despesa média; o valor em caixa e
+// a despesa média são sempre recalculados na hora, nunca guardados.
+// ---------------------------------------------------------------------
+
+router.get("/reserva-financeira", async (req, res) => {
+  const reserve = await prisma.adminFinancialReserve.upsert({ where: { id: "singleton" }, update: {}, create: { id: "singleton" } });
+
+  const [revenues, expenses] = await Promise.all([
+    prisma.adminRevenue.findMany({ where: { status: "PAGO" }, select: { amount: true, paidDate: true } }),
+    prisma.adminExpense.findMany({ where: { status: "PAGO" }, select: { amount: true, paidDate: true } }),
+  ]);
+  const saldoAtual = revenues.reduce((s, r) => s + r.amount, 0) - expenses.reduce((s, e) => s + e.amount, 0);
+
+  // Despesa média dos últimos 3 meses fechados, pra estimar quantos meses
+  // o caixa atual sustentaria.
+  const now = new Date();
+  const start3m = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 3, 1));
+  const despesa3m = expenses.filter((e) => e.paidDate && new Date(e.paidDate) >= start3m).reduce((s, e) => s + e.amount, 0);
+  const mediaDespesaMensal = despesa3m / 3;
+  const mesesAtuais = mediaDespesaMensal > 0 ? Math.round((saldoAtual / mediaDespesaMensal) * 10) / 10 : null;
+
+  res.json({
+    targetMonths: reserve.targetMonths,
+    saldoAtual,
+    mediaDespesaMensal,
+    mesesAtuais,
+    metaAtingida: mesesAtuais !== null ? mesesAtuais >= reserve.targetMonths : null,
+  });
+});
+
+router.patch("/reserva-financeira", async (req, res) => {
+  const { targetMonths } = req.body || {};
+  const value = Number(targetMonths);
+  if (!value || value <= 0) return res.status(400).json({ error: "Informe uma meta de meses válida." });
+  const updated = await prisma.adminFinancialReserve.upsert({ where: { id: "singleton" }, update: { targetMonths: value }, create: { id: "singleton", targetMonths: value } });
+  res.json(updated);
+});
+
+// ---------------------------------------------------------------------
+// METAS
+// ---------------------------------------------------------------------
+
+router.get("/metas", async (req, res) => {
+  const rows = await prisma.adminGoal.findMany({ include: { createdBy: { select: { name: true } } }, orderBy: [{ status: "asc" }, { targetMonth: "asc" }] });
+  res.json(rows.map((g) => ({ ...g, createdBy: g.createdBy?.name || "—" })));
+});
+
+router.post("/metas", async (req, res) => {
+  const { title, type, targetValue, targetMonth, notes } = req.body || {};
+  if (!title || !String(title).trim()) return res.status(400).json({ error: "Informe o título da meta." });
+  const value = Number(targetValue);
+  if (!value || value <= 0) return res.status(400).json({ error: "Informe um valor-alvo válido." });
+  const created = await prisma.adminGoal.create({
+    data: { title: String(title).trim(), type: type || "OUTRO", targetValue: value, targetMonth: targetMonth || null, notes: notes || null, createdById: req.user.id },
+    include: { createdBy: { select: { name: true } } },
+  });
+  res.status(201).json({ ...created, createdBy: created.createdBy?.name || "—" });
+});
+
+router.patch("/metas/:id", async (req, res) => {
+  const existing = await prisma.adminGoal.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Meta não encontrada." });
+  const { title, type, targetValue, targetMonth, status, notes } = req.body || {};
+  const data = {};
+  if (title !== undefined) data.title = String(title).trim();
+  if (type !== undefined) data.type = type;
+  if (targetValue !== undefined) data.targetValue = Number(targetValue);
+  if (targetMonth !== undefined) data.targetMonth = targetMonth || null;
+  if (status !== undefined) data.status = status;
+  if (notes !== undefined) data.notes = notes || null;
+  const updated = await prisma.adminGoal.update({ where: { id: req.params.id }, data, include: { createdBy: { select: { name: true } } } });
+  res.json({ ...updated, createdBy: updated.createdBy?.name || "—" });
+});
+
+router.delete("/metas/:id", async (req, res) => {
+  const existing = await prisma.adminGoal.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Meta não encontrada." });
+  await prisma.adminGoal.delete({ where: { id: req.params.id } });
+  res.json({ id: existing.id, title: existing.title, deleted: true });
+});
+
+// ---------------------------------------------------------------------
+// REUNIÃO DE SÓCIOS — ata + decisões. O "Painel da Reunião" é só um
+// resumo (última reunião + decisões em aberto), sem tabela própria.
+// ---------------------------------------------------------------------
+
+router.get("/reunioes", async (req, res) => {
+  const rows = await prisma.adminPartnerMeeting.findMany({
+    include: { createdBy: { select: { name: true } }, decisions: true },
+    orderBy: { date: "desc" },
+  });
+  res.json(rows.map((m) => ({ id: m.id, date: m.date, title: m.title, participants: m.participants, notes: m.notes, createdAt: m.createdAt, createdBy: m.createdBy?.name || "—", decisions: m.decisions })));
+});
+
+router.get("/reunioes/resumo", async (req, res) => {
+  const [ultima, decisoesAbertas] = await Promise.all([
+    prisma.adminPartnerMeeting.findFirst({ orderBy: { date: "desc" }, include: { decisions: true } }),
+    prisma.adminMeetingDecision.findMany({ where: { status: "ABERTA" }, include: { meeting: { select: { title: true, date: true } } }, orderBy: { dueDate: "asc" } }),
+  ]);
+  res.json({
+    ultimaReuniao: ultima ? { id: ultima.id, date: ultima.date, title: ultima.title, totalDecisoes: ultima.decisions.length } : null,
+    decisoesAbertas: decisoesAbertas.map((d) => ({ id: d.id, description: d.description, responsible: d.responsible, dueDate: d.dueDate, reuniao: d.meeting.title })),
+  });
+});
+
+router.post("/reunioes", async (req, res) => {
+  const { date, title, participants, notes, decisions } = req.body || {};
+  if (!date) return res.status(400).json({ error: "Informe a data da reunião." });
+  if (!title || !String(title).trim()) return res.status(400).json({ error: "Informe o título/pauta." });
+  const created = await prisma.adminPartnerMeeting.create({
+    data: {
+      date: toDateOrNull(date) || new Date(),
+      title: String(title).trim(),
+      participants: Array.isArray(participants) ? participants : [],
+      notes: notes || null,
+      createdById: req.user.id,
+      decisions: Array.isArray(decisions) && decisions.length
+        ? { create: decisions.filter((d) => d.description && d.description.trim()).map((d) => ({ description: d.description.trim(), responsible: d.responsible || null, dueDate: toDateOrNull(d.dueDate) })) }
+        : undefined,
+    },
+    include: { createdBy: { select: { name: true } }, decisions: true },
+  });
+  res.status(201).json({ id: created.id, date: created.date, title: created.title, participants: created.participants, notes: created.notes, createdBy: created.createdBy?.name || "—", decisions: created.decisions });
+});
+
+router.post("/reunioes/:id/decisoes", async (req, res) => {
+  const meeting = await prisma.adminPartnerMeeting.findUnique({ where: { id: req.params.id } });
+  if (!meeting) return res.status(404).json({ error: "Reunião não encontrada." });
+  const { description, responsible, dueDate } = req.body || {};
+  if (!description || !String(description).trim()) return res.status(400).json({ error: "Descreva a decisão." });
+  const created = await prisma.adminMeetingDecision.create({
+    data: { meetingId: meeting.id, description: String(description).trim(), responsible: responsible || null, dueDate: toDateOrNull(dueDate) },
+  });
+  res.status(201).json(created);
+});
+
+router.patch("/reunioes/:id/decisoes/:decisionId", async (req, res) => {
+  const decision = await prisma.adminMeetingDecision.findUnique({ where: { id: req.params.decisionId } });
+  if (!decision || decision.meetingId !== req.params.id) return res.status(404).json({ error: "Decisão não encontrada." });
+  const { description, responsible, dueDate, status } = req.body || {};
+  const data = {};
+  if (description !== undefined) data.description = String(description).trim();
+  if (responsible !== undefined) data.responsible = responsible || null;
+  if (dueDate !== undefined) data.dueDate = toDateOrNull(dueDate);
+  if (status !== undefined) data.status = status;
+  const updated = await prisma.adminMeetingDecision.update({ where: { id: req.params.decisionId }, data });
+  res.json(updated);
+});
+
+// ---------------------------------------------------------------------
+// RELATÓRIOS EXPORTÁVEIS (CSV/Excel) — reaproveita a biblioteca `xlsx`
+// que já era dependência do backend (usada antes só pra LER planilha
+// anexada na IA); aqui é usada pra ESCREVER. PDF continua pelo mesmo
+// padrão já usado nos relatórios mensais do cliente — imprimir a tela
+// pelo navegador — não foi adicionada nenhuma biblioteca de PDF nova.
+// ---------------------------------------------------------------------
+
+function toCsv(rows, columns) {
+  const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const header = columns.map((c) => esc(c.label)).join(",");
+  const lines = rows.map((r) => columns.map((c) => esc(c.value(r))).join(","));
+  return [header, ...lines].join("\r\n");
+}
+
+function toXlsxBuffer(rows, columns, sheetName) {
+  const data = rows.map((r) => {
+    const obj = {};
+    columns.forEach((c) => { obj[c.label] = c.value(r); });
+    return obj;
+  });
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, String(sheetName).slice(0, 31));
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+}
+
+function fmtDateBR(d) {
+  return d ? new Date(d).toLocaleDateString("pt-BR", { timeZone: "UTC" }) : "";
+}
+
+router.get("/relatorios/export", async (req, res) => {
+  const { type = "receitas", format = "csv", status } = req.query;
+  let rows;
+  let columns;
+  const filenameBase = type === "despesas" ? "despesas" : "receitas";
+
+  if (type === "despesas") {
+    const list = (await prisma.adminExpense.findMany({ orderBy: { dueDate: "asc" } })).map(serializeExpense);
+    rows = status && status !== "TODOS" ? list.filter((e) => e.status === status) : list;
+    columns = [
+      { label: "Descrição", value: (r) => r.description },
+      { label: "Fornecedor", value: (r) => r.supplier || "" },
+      { label: "Categoria", value: (r) => r.category || "" },
+      { label: "Vencimento", value: (r) => fmtDateBR(r.dueDate) },
+      { label: "Valor", value: (r) => r.amount },
+      { label: "Status", value: (r) => r.status },
+    ];
+  } else {
+    const list = (await prisma.adminRevenue.findMany({ include: { client: { select: { name: true } } }, orderBy: { dueDate: "asc" } })).map(serializeRevenue);
+    rows = status && status !== "TODOS" ? list.filter((r) => r.status === status) : list;
+    columns = [
+      { label: "Descrição", value: (r) => r.description },
+      { label: "Cliente", value: (r) => r.client?.name || "" },
+      { label: "Categoria", value: (r) => r.category || "" },
+      { label: "Vencimento", value: (r) => fmtDateBR(r.dueDate) },
+      { label: "Valor", value: (r) => r.amount },
+      { label: "Status", value: (r) => r.status },
+    ];
+  }
+
+  if (format === "xlsx") {
+    const buffer = toXlsxBuffer(rows, columns, filenameBase);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${filenameBase}.xlsx"`);
+    return res.send(buffer);
+  }
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${filenameBase}.csv"`);
+  res.send(`﻿${toCsv(rows, columns)}`);
+});
+
+router.get("/relatorios/dre-export", async (req, res) => {
+  const { preset = "mes", format = "csv" } = req.query;
+  const { start, end } = periodRange(preset);
+  const [revenues, expenses] = await Promise.all([
+    prisma.adminRevenue.findMany({ where: { status: "PAGO" }, select: { amount: true, category: true, paidDate: true } }),
+    prisma.adminExpense.findMany({ where: { status: "PAGO" }, select: { amount: true, category: true, paidDate: true } }),
+  ]);
+  const inRange = (d) => d && new Date(d) >= start && new Date(d) <= end;
+  const linhas = [];
+  const receitaPorCategoria = {};
+  for (const r of revenues.filter((r) => inRange(r.paidDate))) receitaPorCategoria[r.category || "Outras receitas"] = (receitaPorCategoria[r.category || "Outras receitas"] || 0) + r.amount;
+  const despesaPorCategoria = {};
+  for (const e of expenses.filter((e) => inRange(e.paidDate))) despesaPorCategoria[e.category || "Outras despesas"] = (despesaPorCategoria[e.category || "Outras despesas"] || 0) + e.amount;
+  Object.entries(receitaPorCategoria).forEach(([cat, amount]) => linhas.push({ tipo: "Receita", categoria: cat, valor: amount }));
+  Object.entries(despesaPorCategoria).forEach(([cat, amount]) => linhas.push({ tipo: "Despesa", categoria: cat, valor: amount }));
+
+  const columns = [
+    { label: "Tipo", value: (r) => r.tipo },
+    { label: "Categoria", value: (r) => r.categoria },
+    { label: "Valor", value: (r) => r.valor },
+  ];
+
+  if (format === "xlsx") {
+    const buffer = toXlsxBuffer(linhas, columns, "DRE");
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="dre.xlsx"`);
+    return res.send(buffer);
+  }
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="dre.csv"`);
+  res.send(`﻿${toCsv(linhas, columns)}`);
 });
 
 module.exports = router;

@@ -110,3 +110,21 @@ export const TOOL_CATEGORY_OPTIONS = [
   "IA",
   "Outros",
 ];
+
+// --- Fase 3 (Pró-labore, Distribuição, Reserva, Metas, Reunião, Auditoria) ---
+
+export const GOAL_TYPE_OPTIONS = [
+  { value: "RECEITA", label: "Receita" },
+  { value: "DESPESA", label: "Despesa" },
+  { value: "LUCRO", label: "Lucro" },
+  { value: "OUTRO", label: "Outro" },
+];
+
+export const GOAL_STATUS_LABEL = { EM_ANDAMENTO: "Em andamento", ATINGIDA: "Atingida", NAO_ATINGIDA: "Não atingida" };
+export const GOAL_STATUS_CLASS = {
+  EM_ANDAMENTO: "bg-warningsoft text-warning",
+  ATINGIDA: "bg-successsoft text-success",
+  NAO_ATINGIDA: "bg-dangersoft text-danger",
+};
+
+export const DECISION_STATUS_LABEL = { ABERTA: "Aberta", CONCLUIDA: "Concluída" };

@@ -111,6 +111,14 @@ model User {
   // também é um membro cadastrado da equipe (opcional — nem todo User vira
   // um AdminEmployee, e nem todo AdminEmployee tem login no sistema).
   adminEmployeeProfile AdminEmployee? @relation("AdminEmployeeUser")
+  // Fase 3 do módulo Administração (07/09/2026): pró-labore, distribuição de
+  // lucros, metas, reunião de sócios e auditoria.
+  adminPartnerSettings        AdminPartnerSettings?    @relation("AdminPartnerSettingsUser")
+  adminProfitDistributionsCreated AdminProfitDistribution[] @relation("AdminProfitDistributionCreatedBy")
+  adminProfitShares            AdminProfitShare[]        @relation("AdminProfitShareUser")
+  adminGoalsCreated            AdminGoal[]                @relation("AdminGoalCreatedBy")
+  adminMeetingsCreated         AdminPartnerMeeting[]      @relation("AdminPartnerMeetingCreatedBy")
+  adminAuditLogEntries         AdminAuditLog[]            @relation("AdminAuditLogUser")
 
   // Set only for role = CLIENTE: which client's portal this login can see.
   clientId String?
@@ -800,4 +808,137 @@ model AdminContract {
   createdBy   User?   @relation("AdminContractCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([status, endDate])
+}
+
+// ==========================================================================
+// Módulo ADMINISTRAÇÃO — fase 3 (07/09/2026): Pró-labore, Distribuição de
+// Lucros (dois conceitos deliberadamente SEPARADOS — nunca tratar o saldo
+// em caixa inteiro como lucro disponível, seção 20/21 do pedido), Reserva
+// Financeira, Metas, Reunião de Sócios (ata + decisões) e Auditoria (log
+// automático de toda criação/edição/exclusão feita dentro da Administração
+// — ver middleware em admin.js — que nenhum usuário comum consegue apagar,
+// porque não existe nenhuma rota de exclusão pra esse log).
+// ==========================================================================
+
+// Configuração de pró-labore de um sócio — valor e dia de pagamento
+// habitual. O lançamento em si continua sendo uma AdminExpense (categoria
+// "Pró-labore", que já existia), gerada pela tela de Pró-labore — mesmo
+// padrão de reaproveitamento já usado na Folha de pagamentos.
+model AdminPartnerSettings {
+  id             String   @id @default(cuid())
+  proLaboreValue Float?
+  proLaboreDay   Int?
+  notes          String?  @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  userId String @unique
+  user   User   @relation("AdminPartnerSettingsUser", fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Um evento de distribuição de lucro entre os sócios — sempre um valor
+// DECIDIDO manualmente (nunca calculado sozinho a partir do saldo bancário
+// inteiro), dividido em uma ou mais parcelas por sócio (shares).
+model AdminProfitDistribution {
+  id             String   @id @default(cuid())
+  referenceMonth String // "2026-09"
+  totalAmount    Float
+  notes          String?  @db.Text
+  createdAt      DateTime @default(now())
+
+  createdById String?
+  createdBy   User?   @relation("AdminProfitDistributionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  shares AdminProfitShare[]
+}
+
+model AdminProfitShare {
+  id       String    @id @default(cuid())
+  amount   Float
+  paidDate DateTime?
+
+  distributionId String
+  distribution   AdminProfitDistribution @relation(fields: [distributionId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation("AdminProfitShareUser", fields: [userId], references: [id])
+}
+
+// Meta de reserva financeira, em meses de despesa média — singleton (uma
+// linha só, id fixo "singleton"). O valor atual em caixa e a despesa média
+// são sempre calculados na hora a partir de AdminRevenue/AdminExpense, não
+// guardados aqui.
+model AdminFinancialReserve {
+  id           String   @id @default("singleton")
+  targetMonths Float    @default(3)
+  updatedAt    DateTime @updatedAt
+}
+
+enum AdminGoalStatus {
+  EM_ANDAMENTO
+  ATINGIDA
+  NAO_ATINGIDA
+}
+
+model AdminGoal {
+  id          String          @id @default(cuid())
+  title       String
+  type        String // RECEITA | DESPESA | LUCRO | OUTRO
+  targetValue Float
+  targetMonth String? // "2026-12"
+  status      AdminGoalStatus @default(EM_ANDAMENTO)
+  notes       String?         @db.Text
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  createdById String?
+  createdBy   User?   @relation("AdminGoalCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+}
+
+// Reunião de sócios — ata (notes) + lista de decisões, cada uma com
+// responsável e prazo, que vira o "Painel da Reunião" (decisões em aberto).
+model AdminPartnerMeeting {
+  id           String   @id @default(cuid())
+  date         DateTime
+  title        String
+  participants String[] @default([])
+  notes        String?  @db.Text // ata da reunião
+  createdAt    DateTime @default(now())
+
+  createdById String?
+  createdBy   User?   @relation("AdminPartnerMeetingCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  decisions AdminMeetingDecision[]
+}
+
+model AdminMeetingDecision {
+  id          String    @id @default(cuid())
+  description String    @db.Text
+  responsible String?
+  dueDate     DateTime?
+  status      String    @default("ABERTA") // ABERTA | CONCLUIDA
+  createdAt   DateTime  @default(now())
+
+  meetingId String
+  meeting   AdminPartnerMeeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+}
+
+// Log de auditoria automático — gravado por um middleware em admin.js pra
+// toda criação/edição/exclusão feita em qualquer rota do módulo
+// Administração, sem precisar instrumentar cada rota manualmente. Não existe
+// nenhuma rota de exclusão pra esse log — nem o próprio sócio apaga pela UI —
+// exatamente o "nunca pode ser apagado" pedido.
+model AdminAuditLog {
+  id        String   @id @default(cuid())
+  action    String // CRIAÇÃO | EDIÇÃO | EXCLUSÃO/CANCELAMENTO
+  entity    String // "Receita", "Despesa", "Contrato", "Meta"...
+  entityId  String?
+  summary   String   @db.Text
+  createdAt DateTime @default(now())
+
+  userId String?
+  user   User?   @relation("AdminAuditLogUser", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([entity, createdAt])
+  @@index([createdAt])
 }

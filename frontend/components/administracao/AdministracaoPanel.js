@@ -15,6 +15,13 @@ import AdminFolha from "./AdminFolha";
 import AdminComissoes from "./AdminComissoes";
 import AdminFerramentas from "./AdminFerramentas";
 import AdminFornecedores from "./AdminFornecedores";
+import AdminProLabore from "./AdminProLabore";
+import AdminDistribuicaoLucros from "./AdminDistribuicaoLucros";
+import AdminReservaFinanceira from "./AdminReservaFinanceira";
+import AdminMetas from "./AdminMetas";
+import AdminReunioes from "./AdminReunioes";
+import AdminAuditoria from "./AdminAuditoria";
+import AdminRelatorios from "./AdminRelatorios";
 
 // Menu interno do módulo Administração (seção 43 do pedido) — agrupado por
 // categoria visual, mas cada item é um componente próprio e independente.
@@ -47,6 +54,23 @@ const GROUPS = [
       { key: "comissoes", label: "Comissões" },
       { key: "ferramentas", label: "Ferramentas" },
       { key: "fornecedores", label: "Fornecedores" },
+    ],
+  },
+  {
+    label: "Sócios",
+    items: [
+      { key: "prolabore", label: "Pró-labore" },
+      { key: "distribuicao", label: "Distribuição de lucros" },
+      { key: "reserva", label: "Reserva financeira" },
+      { key: "reunioes", label: "Reunião de sócios" },
+    ],
+  },
+  {
+    label: "Gestão",
+    items: [
+      { key: "metas", label: "Metas" },
+      { key: "relatorios", label: "Relatórios" },
+      { key: "auditoria", label: "Auditoria" },
     ],
   },
 ];
@@ -86,6 +110,13 @@ export default function AdministracaoPanel() {
       {sub === "comissoes" && <AdminComissoes />}
       {sub === "ferramentas" && <AdminFerramentas />}
       {sub === "fornecedores" && <AdminFornecedores />}
+      {sub === "prolabore" && <AdminProLabore />}
+      {sub === "distribuicao" && <AdminDistribuicaoLucros />}
+      {sub === "reserva" && <AdminReservaFinanceira />}
+      {sub === "reunioes" && <AdminReunioes />}
+      {sub === "metas" && <AdminMetas />}
+      {sub === "relatorios" && <AdminRelatorios />}
+      {sub === "auditoria" && <AdminAuditoria />}
     </div>
   );
 }
