@@ -105,6 +105,12 @@ model User {
   adminRevenuesCreated       AdminRevenue[]        @relation("AdminRevenueCreatedBy")
   adminExpensesCreated       AdminExpense[]        @relation("AdminExpenseCreatedBy")
   adminCollectionNotesCreated AdminCollectionNote[] @relation("AdminCollectionNoteCreatedBy")
+  // Fase 2 do módulo Administração (07/09/2026): Contratos, Equipe.
+  adminContractsCreated AdminContract[] @relation("AdminContractCreatedBy")
+  // Ficha de "funcionário/prestador" da Administração, quando esse login
+  // também é um membro cadastrado da equipe (opcional — nem todo User vira
+  // um AdminEmployee, e nem todo AdminEmployee tem login no sistema).
+  adminEmployeeProfile AdminEmployee? @relation("AdminEmployeeUser")
 
   // Set only for role = CLIENTE: which client's portal this login can see.
   clientId String?
@@ -189,6 +195,9 @@ model Client {
   commissions  Commission[]
   metricEntries ClientMetricEntry[]
   adminRevenues AdminRevenue[]
+  // Fase 2 do módulo Administração: contratos vinculados a esse cliente
+  // (reaproveita o cadastro já existente — nunca duplica cliente).
+  adminContracts AdminContract[] @relation("AdminContractClient")
 }
 
 // Registro manual de métricas de campanha (enquanto o app do Meta for
@@ -646,6 +655,12 @@ model AdminExpense {
   createdById String?
   createdBy   User?   @relation("AdminExpenseCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
+  // Fase 2: quando essa despesa é um pagamento de folha (salário/prestador),
+  // vincula ao cadastro da Equipe — permite ao módulo Folha saber se o mês
+  // já foi lançado pra cada pessoa, sem depender de casar texto livre.
+  employeeId String?
+  employee   AdminEmployee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+
   @@index([status, dueDate])
 }
 
@@ -662,4 +677,127 @@ model AdminCollectionNote {
 
   createdById String?
   createdBy   User?   @relation("AdminCollectionNoteCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+}
+
+// ==========================================================================
+// Módulo ADMINISTRAÇÃO — fase 2 (07/09/2026): DRE (calculado a partir de
+// AdminRevenue/AdminExpense, sem tabela própria), Impostos (reaproveita
+// AdminExpense com category "Impostos"), Contratos, Equipe, Folha de
+// pagamentos (reaproveita AdminExpense via employeeId acima), Comissões
+// (visão consolidada do Commission/WithdrawalRequest que já existiam pro
+// financeiro do gestor — não duplica dado novo), Ferramentas/Assinaturas e
+// Fornecedores.
+// ==========================================================================
+
+enum AdminContractType {
+  CLIENTE
+  FUNCIONARIO
+  PRESTADOR
+  FORNECEDOR
+}
+
+enum AdminContractStatus {
+  ATIVO
+  ENCERRADO
+  CANCELADO
+}
+
+// Ficha de um membro da equipe (funcionário CLT, sócio, ou prestador PJ) —
+// separado do User/login do sistema porque nem todo mundo na equipe tem (ou
+// precisa ter) acesso ao sistema, e vice-versa (userId é opcional nos dois
+// sentidos). paymentValue/paymentDay alimentam a tela de Folha, que lança um
+// AdminExpense (categoria Funcionários/Prestadores) vinculado por mês.
+model AdminEmployee {
+  id           String    @id @default(cuid())
+  name         String
+  role         String? // cargo/função
+  type         String    @default("CLT") // CLT | PJ | PRESTADOR
+  email        String?
+  phone        String?
+  startDate    DateTime?
+  endDate      DateTime?
+  status       String    @default("ATIVO") // ATIVO | INATIVO | DESLIGADO
+  paymentValue Float?
+  paymentDay   Int? // dia do mês do pagamento habitual
+  notes        String?   @db.Text
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  userId String? @unique
+  user   User?   @relation("AdminEmployeeUser", fields: [userId], references: [id], onDelete: SetNull)
+
+  payrollExpenses AdminExpense[]
+  contracts       AdminContract[]
+}
+
+// Cadastro de fornecedores da agência — categoria, contato, status. O
+// vínculo com despesas continua pelo campo de texto livre `supplier` já
+// existente em AdminExpense (não foi criada uma chave estrangeira nova ali,
+// pra não mexer no que já funciona); o total gasto por fornecedor nesta
+// tela é estimado casando esse nome, sem diferenciar maiúsc./minúsc.
+model AdminSupplier {
+  id        String   @id @default(cuid())
+  name      String
+  category  String?
+  contact   String?
+  notes     String?  @db.Text
+  status    String   @default("ATIVO") // ATIVO | INATIVO
+  createdAt DateTime @default(now())
+
+  contracts AdminContract[]
+}
+
+// Ferramentas e assinaturas da agência (softwares, SaaS) — com valor mensal
+// e data de renovação, pra alimentar os alertas de vencimento (30/15/7 dias,
+// mesmo padrão de Contratos/Cobranças).
+model AdminTool {
+  id           String    @id @default(cuid())
+  name         String
+  category     String?
+  monthlyValue Float?
+  renewalDate  DateTime?
+  status       String    @default("ATIVO") // ATIVO | CANCELADO
+  responsible  String?
+  url          String?
+  notes        String?   @db.Text
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+// Contrato — de cliente (renovação de plano/serviço), de funcionário/
+// prestador ou de fornecedor. Pode ou não estar vinculado a um cadastro já
+// existente (clientId/employeeId/supplierId, todos opcionais — nunca
+// duplica); counterpartyName cobre o caso de uma contraparte sem cadastro
+// próprio ainda. Alerta de renovação em dias configurável (padrão 30, como
+// pedido: 30/15/7 dias antes do vencimento).
+model AdminContract {
+  id               String              @id @default(cuid())
+  type             AdminContractType
+  title            String
+  counterpartyName String?
+  startDate        DateTime?
+  endDate          DateTime?
+  value            Float?
+  renewalAlertDays Int                 @default(30)
+  status           AdminContractStatus @default(ATIVO)
+  fileName         String?
+  fileMimeType     String?
+  fileBase64       String?             @db.Text
+  notes            String?             @db.Text
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  clientId String?
+  client   Client? @relation("AdminContractClient", fields: [clientId], references: [id], onDelete: SetNull)
+
+  employeeId String?
+  employee   AdminEmployee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+
+  supplierId String?
+  supplier   AdminSupplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+
+  createdById String?
+  createdBy   User?   @relation("AdminContractCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([status, endDate])
 }

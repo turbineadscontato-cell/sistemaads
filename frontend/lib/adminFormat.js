@@ -76,3 +76,37 @@ export const EXPENSE_CATEGORY_OPTIONS = [
 ];
 
 export const PAYMENT_METHOD_OPTIONS = ["Pix", "Boleto", "Cartão", "Transferência", "Dinheiro", "Outro"];
+
+// --- Fase 2 (Contratos, Equipe, Ferramentas, Fornecedores) ---------------
+
+export const CONTRACT_TYPE_OPTIONS = [
+  { value: "CLIENTE", label: "Cliente" },
+  { value: "FUNCIONARIO", label: "Funcionário" },
+  { value: "PRESTADOR", label: "Prestador" },
+  { value: "FORNECEDOR", label: "Fornecedor" },
+];
+
+export const CONTRACT_STATUS_LABEL = { ATIVO: "Ativo", ENCERRADO: "Encerrado", CANCELADO: "Cancelado" };
+export const CONTRACT_STATUS_CLASS = {
+  ATIVO: "bg-successsoft text-success",
+  ENCERRADO: "bg-white/5 text-inksoft",
+  CANCELADO: "bg-white/5 text-inkfaint line-through",
+};
+
+export const EMPLOYEE_TYPE_OPTIONS = [
+  { value: "CLT", label: "CLT" },
+  { value: "PJ", label: "PJ" },
+  { value: "PRESTADOR", label: "Prestador" },
+];
+
+export const EMPLOYEE_STATUS_LABEL = { ATIVO: "Ativo", INATIVO: "Inativo", DESLIGADO: "Desligado" };
+
+export const TOOL_CATEGORY_OPTIONS = [
+  "Software/SaaS",
+  "Design",
+  "Anúncios",
+  "Hospedagem",
+  "Comunicação",
+  "IA",
+  "Outros",
+];

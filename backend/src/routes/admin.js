@@ -640,4 +640,563 @@ router.get("/dashboard", async (req, res) => {
   });
 });
 
+// ==========================================================================
+// FASE 2 (07/09/2026): DRE, Impostos, Contratos, Equipe, Folha de
+// pagamentos, Comissões (visão consolidada) e Ferramentas/Fornecedores.
+// ==========================================================================
+
+// Teto de arquivo genérico (contrato anexado) — mesmo valor já usado pro
+// comprovante de despesa.
+const MAX_FILE_B64_CHARS = MAX_RECEIPT_B64_CHARS;
+
+// ---------------------------------------------------------------------
+// DRE (demonstração de resultado gerencial)
+// ---------------------------------------------------------------------
+
+router.get("/dre", async (req, res) => {
+  const { preset = "mes", from, to } = req.query;
+  const { start, end } = periodRange(preset, from, to);
+
+  const [revenues, expenses] = await Promise.all([
+    prisma.adminRevenue.findMany({ where: { status: "PAGO" }, select: { amount: true, category: true, paidDate: true } }),
+    prisma.adminExpense.findMany({ where: { status: "PAGO" }, select: { amount: true, category: true, paidDate: true } }),
+  ]);
+
+  const inRange = (d) => d && new Date(d) >= start && new Date(d) <= end;
+  const rev = revenues.filter((r) => inRange(r.paidDate));
+  const exp = expenses.filter((e) => inRange(e.paidDate));
+
+  const receitaPorCategoria = {};
+  for (const r of rev) {
+    const cat = r.category || "Outras receitas";
+    receitaPorCategoria[cat] = (receitaPorCategoria[cat] || 0) + r.amount;
+  }
+  const despesaPorCategoria = {};
+  for (const e of exp) {
+    const cat = e.category || "Outras despesas";
+    despesaPorCategoria[cat] = (despesaPorCategoria[cat] || 0) + e.amount;
+  }
+  const toList = (obj) => Object.entries(obj).map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount);
+
+  const receitaBruta = rev.reduce((s, r) => s + r.amount, 0);
+  const totalDespesas = exp.reduce((s, e) => s + e.amount, 0);
+  const resultadoLiquido = receitaBruta - totalDespesas;
+  const margem = receitaBruta > 0 ? Math.round((resultadoLiquido / receitaBruta) * 1000) / 10 : null;
+
+  res.json({
+    periodo: { preset, start, end },
+    receitaBruta,
+    receitaPorCategoria: toList(receitaPorCategoria),
+    totalDespesas,
+    despesaPorCategoria: toList(despesaPorCategoria),
+    resultadoLiquido,
+    margem,
+  });
+});
+
+// ---------------------------------------------------------------------
+// IMPOSTOS — reaproveita AdminExpense (categoria "Impostos"); criar/editar/
+// marcar pago/cancelar continua pelos endpoints de /despesas já existentes.
+// Esse endpoint só monta a visão com alerta de vencimento (3/7/15/30 dias).
+// ---------------------------------------------------------------------
+
+router.get("/impostos", async (req, res) => {
+  const rows = await prisma.adminExpense.findMany({
+    where: { category: "Impostos" },
+    include: { createdBy: { select: { id: true, name: true } } },
+    orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }],
+  });
+  const today = todayUTC();
+  const list = rows.map(serializeExpense).map((e) => {
+    const dias = e.dueDate ? Math.round((startOfDay(e.dueDate) - today) / 86400000) : null;
+    return {
+      ...e,
+      receiptBase64: null,
+      diasParaVencer: dias !== null && dias >= 0 ? dias : null,
+      diasAtraso: dias !== null && dias < 0 ? Math.abs(dias) : null,
+    };
+  });
+  res.json(list);
+});
+
+// ---------------------------------------------------------------------
+// CONTRATOS (cliente, funcionário/prestador, fornecedor)
+// ---------------------------------------------------------------------
+
+const CONTRACT_TYPES = ["CLIENTE", "FUNCIONARIO", "PRESTADOR", "FORNECEDOR"];
+
+function serializeContract(c) {
+  const today = todayUTC();
+  let diasParaVencer = null;
+  let diasAtraso = null;
+  if (c.endDate) {
+    const dias = Math.round((startOfDay(c.endDate) - today) / 86400000);
+    if (dias >= 0) diasParaVencer = dias;
+    else diasAtraso = Math.abs(dias);
+  }
+  const alertaRenovacao = c.status === "ATIVO" && diasParaVencer !== null && diasParaVencer <= (c.renewalAlertDays || 30);
+  return {
+    id: c.id,
+    type: c.type,
+    title: c.title,
+    counterpartyName: c.counterpartyName,
+    startDate: c.startDate,
+    endDate: c.endDate,
+    value: c.value,
+    renewalAlertDays: c.renewalAlertDays,
+    status: c.status,
+    fileName: c.fileName,
+    fileMimeType: c.fileMimeType,
+    hasFile: !!c.fileBase64,
+    fileBase64: c.fileBase64 || null,
+    notes: c.notes,
+    createdAt: c.createdAt,
+    client: c.client ? { id: c.client.id, name: c.client.name } : null,
+    employee: c.employee ? { id: c.employee.id, name: c.employee.name } : null,
+    supplier: c.supplier ? { id: c.supplier.id, name: c.supplier.name } : null,
+    createdBy: c.createdBy ? { id: c.createdBy.id, name: c.createdBy.name } : null,
+    diasParaVencer,
+    diasAtraso,
+    alertaRenovacao,
+  };
+}
+
+const CONTRACT_INCLUDE = {
+  client: { select: { id: true, name: true } },
+  employee: { select: { id: true, name: true } },
+  supplier: { select: { id: true, name: true } },
+  createdBy: { select: { id: true, name: true } },
+};
+
+router.get("/contratos", async (req, res) => {
+  const { type, status, q } = req.query;
+  const where = {};
+  if (type && CONTRACT_TYPES.includes(type)) where.type = type;
+  if (status) where.status = status;
+  if (q) where.title = { contains: String(q), mode: "insensitive" };
+  const rows = await prisma.adminContract.findMany({ where, include: CONTRACT_INCLUDE, orderBy: [{ endDate: "asc" }, { createdAt: "desc" }] });
+  res.json(rows.map((c) => ({ ...serializeContract(c), fileBase64: null })));
+});
+
+router.post("/contratos", async (req, res) => {
+  const { type, title, counterpartyName, clientId, employeeId, supplierId, startDate, endDate, value, renewalAlertDays, notes, fileName, fileMimeType, fileBase64 } = req.body || {};
+  if (!type || !CONTRACT_TYPES.includes(type)) return res.status(400).json({ error: "Informe o tipo do contrato." });
+  if (!title || !String(title).trim()) return res.status(400).json({ error: "Informe o título do contrato." });
+  if (fileBase64 && fileBase64.length > MAX_FILE_B64_CHARS) return res.status(400).json({ error: "Arquivo muito grande." });
+  if (clientId) {
+    const found = await prisma.client.findUnique({ where: { id: clientId }, select: { id: true } });
+    if (!found) return res.status(400).json({ error: "Cliente não encontrado." });
+  }
+  if (employeeId) {
+    const found = await prisma.adminEmployee.findUnique({ where: { id: employeeId }, select: { id: true } });
+    if (!found) return res.status(400).json({ error: "Membro da equipe não encontrado." });
+  }
+  if (supplierId) {
+    const found = await prisma.adminSupplier.findUnique({ where: { id: supplierId }, select: { id: true } });
+    if (!found) return res.status(400).json({ error: "Fornecedor não encontrado." });
+  }
+
+  const created = await prisma.adminContract.create({
+    data: {
+      type,
+      title: String(title).trim(),
+      counterpartyName: counterpartyName || null,
+      clientId: clientId || null,
+      employeeId: employeeId || null,
+      supplierId: supplierId || null,
+      startDate: toDateOrNull(startDate),
+      endDate: toDateOrNull(endDate),
+      value: value != null && value !== "" ? Number(value) : null,
+      renewalAlertDays: renewalAlertDays ? Number(renewalAlertDays) : 30,
+      notes: notes || null,
+      fileName: fileBase64 ? fileName || null : null,
+      fileMimeType: fileBase64 ? fileMimeType || null : null,
+      fileBase64: fileBase64 || null,
+      createdById: req.user.id,
+    },
+    include: CONTRACT_INCLUDE,
+  });
+  res.status(201).json({ ...serializeContract(created), fileBase64: null });
+});
+
+router.patch("/contratos/:id", async (req, res) => {
+  const existing = await prisma.adminContract.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Contrato não encontrado." });
+  const { title, counterpartyName, clientId, employeeId, supplierId, startDate, endDate, value, renewalAlertDays, status, notes, fileName, fileMimeType, fileBase64 } = req.body || {};
+
+  const data = {};
+  if (title !== undefined) data.title = String(title).trim();
+  if (counterpartyName !== undefined) data.counterpartyName = counterpartyName || null;
+  if (clientId !== undefined) data.clientId = clientId || null;
+  if (employeeId !== undefined) data.employeeId = employeeId || null;
+  if (supplierId !== undefined) data.supplierId = supplierId || null;
+  if (startDate !== undefined) data.startDate = toDateOrNull(startDate);
+  if (endDate !== undefined) data.endDate = toDateOrNull(endDate);
+  if (value !== undefined) data.value = value != null && value !== "" ? Number(value) : null;
+  if (renewalAlertDays !== undefined) data.renewalAlertDays = Number(renewalAlertDays) || 30;
+  if (status !== undefined) data.status = status;
+  if (notes !== undefined) data.notes = notes || null;
+  if (fileBase64 !== undefined) {
+    if (fileBase64 && fileBase64.length > MAX_FILE_B64_CHARS) return res.status(400).json({ error: "Arquivo muito grande." });
+    data.fileBase64 = fileBase64 || null;
+    data.fileName = fileBase64 ? fileName || null : null;
+    data.fileMimeType = fileBase64 ? fileMimeType || null : null;
+  }
+
+  const updated = await prisma.adminContract.update({ where: { id: req.params.id }, data, include: CONTRACT_INCLUDE });
+  res.json({ ...serializeContract(updated), fileBase64: null });
+});
+
+// Encerrar/cancelar um contrato nunca apaga o registro — só muda o status
+// (mesmo princípio já usado em Receitas/Despesas).
+router.delete("/contratos/:id", async (req, res) => {
+  const existing = await prisma.adminContract.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Contrato não encontrado." });
+  const updated = await prisma.adminContract.update({ where: { id: req.params.id }, data: { status: "CANCELADO" }, include: CONTRACT_INCLUDE });
+  res.json({ ...serializeContract(updated), fileBase64: null });
+});
+
+// ---------------------------------------------------------------------
+// EQUIPE
+// ---------------------------------------------------------------------
+
+function serializeEmployee(e) {
+  return {
+    id: e.id,
+    name: e.name,
+    role: e.role,
+    type: e.type,
+    email: e.email,
+    phone: e.phone,
+    startDate: e.startDate,
+    endDate: e.endDate,
+    status: e.status,
+    paymentValue: e.paymentValue,
+    paymentDay: e.paymentDay,
+    notes: e.notes,
+    createdAt: e.createdAt,
+    user: e.user ? { id: e.user.id, name: e.user.name, role: e.user.role } : null,
+  };
+}
+
+router.get("/equipe", async (req, res) => {
+  const rows = await prisma.adminEmployee.findMany({ include: { user: { select: { id: true, name: true, role: true } } }, orderBy: { name: "asc" } });
+  res.json(rows.map(serializeEmployee));
+});
+
+// Logins internos (sócio/gestor/atendente) disponíveis pra vincular a uma
+// ficha de equipe — o frontend descarta os que já aparecem vinculados a
+// outro membro na própria listagem de /equipe.
+router.get("/equipe-usuarios", async (req, res) => {
+  const rows = await prisma.user.findMany({
+    where: { role: { in: ["SOCIO", "GESTOR", "ATENDENTE"] }, active: true },
+    select: { id: true, name: true, role: true },
+    orderBy: { name: "asc" },
+  });
+  res.json(rows);
+});
+
+router.post("/equipe", async (req, res) => {
+  const { name, role, type, email, phone, startDate, endDate, status, paymentValue, paymentDay, notes, userId } = req.body || {};
+  if (!name || !String(name).trim()) return res.status(400).json({ error: "Informe o nome." });
+  if (userId) {
+    const u = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+    if (!u) return res.status(400).json({ error: "Usuário não encontrado." });
+    const already = await prisma.adminEmployee.findUnique({ where: { userId } });
+    if (already) return res.status(400).json({ error: "Esse usuário já tem uma ficha de equipe." });
+  }
+  const created = await prisma.adminEmployee.create({
+    data: {
+      name: String(name).trim(),
+      role: role || null,
+      type: type || "CLT",
+      email: email || null,
+      phone: phone || null,
+      startDate: toDateOrNull(startDate),
+      endDate: toDateOrNull(endDate),
+      status: status || "ATIVO",
+      paymentValue: paymentValue != null && paymentValue !== "" ? Number(paymentValue) : null,
+      paymentDay: paymentDay ? Number(paymentDay) : null,
+      notes: notes || null,
+      userId: userId || null,
+    },
+    include: { user: { select: { id: true, name: true, role: true } } },
+  });
+  res.status(201).json(serializeEmployee(created));
+});
+
+router.patch("/equipe/:id", async (req, res) => {
+  const existing = await prisma.adminEmployee.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Membro da equipe não encontrado." });
+  const { name, role, type, email, phone, startDate, endDate, status, paymentValue, paymentDay, notes, userId } = req.body || {};
+  const data = {};
+  if (name !== undefined) data.name = String(name).trim();
+  if (role !== undefined) data.role = role || null;
+  if (type !== undefined) data.type = type;
+  if (email !== undefined) data.email = email || null;
+  if (phone !== undefined) data.phone = phone || null;
+  if (startDate !== undefined) data.startDate = toDateOrNull(startDate);
+  if (endDate !== undefined) data.endDate = toDateOrNull(endDate);
+  if (status !== undefined) data.status = status;
+  if (paymentValue !== undefined) data.paymentValue = paymentValue != null && paymentValue !== "" ? Number(paymentValue) : null;
+  if (paymentDay !== undefined) data.paymentDay = paymentDay ? Number(paymentDay) : null;
+  if (notes !== undefined) data.notes = notes || null;
+  if (userId !== undefined) data.userId = userId || null;
+  const updated = await prisma.adminEmployee.update({ where: { id: req.params.id }, data, include: { user: { select: { id: true, name: true, role: true } } } });
+  res.json(serializeEmployee(updated));
+});
+
+// Sem exclusão permanente — desligar marca status DESLIGADO, preservando o
+// histórico de pagamentos/contratos ligados a essa pessoa.
+router.delete("/equipe/:id", async (req, res) => {
+  const existing = await prisma.adminEmployee.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Membro da equipe não encontrado." });
+  const updated = await prisma.adminEmployee.update({ where: { id: req.params.id }, data: { status: "DESLIGADO" }, include: { user: { select: { id: true, name: true, role: true } } } });
+  res.json(serializeEmployee(updated));
+});
+
+// ---------------------------------------------------------------------
+// FOLHA DE PAGAMENTOS — reaproveita AdminExpense (via employeeId) em vez de
+// um livro-caixa paralelo; "lançar" cria a despesa do mês pra essa pessoa.
+// ---------------------------------------------------------------------
+
+function monthRange(monthStr) {
+  let year;
+  let month;
+  if (monthStr && /^\d{4}-\d{2}$/.test(String(monthStr))) {
+    [year, month] = String(monthStr).split("-").map(Number);
+    month -= 1;
+  } else {
+    const now = new Date();
+    year = now.getUTCFullYear();
+    month = now.getUTCMonth();
+  }
+  const start = new Date(Date.UTC(year, month, 1));
+  const end = new Date(Date.UTC(year, month + 1, 0));
+  const key = `${year}-${String(month + 1).padStart(2, "0")}`;
+  return { start, end, key };
+}
+
+router.get("/folha", async (req, res) => {
+  const { month } = req.query;
+  const { start, end, key } = monthRange(month);
+  const employees = await prisma.adminEmployee.findMany({ where: { status: "ATIVO" }, orderBy: { name: "asc" } });
+  const expenses = employees.length
+    ? await prisma.adminExpense.findMany({
+        where: { employeeId: { in: employees.map((e) => e.id) }, OR: [{ dueDate: { gte: start, lte: end } }, { date: { gte: start, lte: end } }] },
+      })
+    : [];
+  const byEmployee = new Map();
+  for (const e of expenses) if (e.employeeId) byEmployee.set(e.employeeId, e);
+
+  const rows = employees.map((e) => {
+    const lanc = byEmployee.get(e.id);
+    return {
+      id: e.id,
+      name: e.name,
+      role: e.role,
+      type: e.type,
+      paymentValue: e.paymentValue,
+      paymentDay: e.paymentDay,
+      lancamento: lanc
+        ? { id: lanc.id, status: deriveStatus(lanc.status, lanc.dueDate), amount: lanc.amount, dueDate: lanc.dueDate, paidDate: lanc.paidDate }
+        : null,
+    };
+  });
+  res.json({ month: key, rows });
+});
+
+router.post("/folha/:employeeId/lancar", async (req, res) => {
+  const employee = await prisma.adminEmployee.findUnique({ where: { id: req.params.employeeId } });
+  if (!employee) return res.status(404).json({ error: "Membro da equipe não encontrado." });
+  const { month, amount } = req.body || {};
+  const effectiveAmount = amount != null && amount !== "" ? Number(amount) : employee.paymentValue;
+  if (!effectiveAmount || effectiveAmount <= 0) return res.status(400).json({ error: "Defina um valor de pagamento válido pra essa pessoa." });
+
+  const { start, end, key } = monthRange(month);
+  const already = await prisma.adminExpense.findFirst({ where: { employeeId: employee.id, OR: [{ dueDate: { gte: start, lte: end } }, { date: { gte: start, lte: end } }] } });
+  if (already) return res.status(400).json({ error: `O pagamento de ${key} já foi lançado pra ${employee.name}.` });
+
+  const lastDay = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0)).getUTCDate();
+  const day = Math.min(employee.paymentDay || 5, lastDay);
+  const dueDate = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), day));
+
+  const created = await prisma.adminExpense.create({
+    data: {
+      description: `Pagamento — ${employee.name} (${key})`,
+      category: employee.type === "PJ" || employee.type === "PRESTADOR" ? "Prestadores" : "Funcionários",
+      amount: effectiveAmount,
+      dueDate,
+      responsible: employee.name,
+      status: "PENDENTE",
+      employeeId: employee.id,
+      createdById: req.user.id,
+    },
+  });
+  res.status(201).json({ ...serializeExpense(created), receiptBase64: null });
+});
+
+// ---------------------------------------------------------------------
+// COMISSÕES — visão consolidada por gestor, a partir do Commission/
+// WithdrawalRequest que já existiam pro financeiro do gestor (aba
+// Financeiro). Não é um livro novo — só reúne aqui pra o sócio-contador
+// ver junto do resto da Administração. Preparado pra, no futuro, somar
+// também comissão de SDR/Closer quando esses papéis existirem.
+// ---------------------------------------------------------------------
+
+router.get("/comissoes", async (req, res) => {
+  const [pessoas, commissions, withdrawals] = await Promise.all([
+    prisma.user.findMany({ where: { role: { in: ["SOCIO", "GESTOR"] } }, select: { id: true, name: true, rank: true, role: true } }),
+    prisma.commission.findMany({ select: { gestorId: true, amount: true, service: true } }),
+    prisma.withdrawalRequest.findMany({ where: { status: "APROVADA" }, select: { gestorId: true, amount: true } }),
+  ]);
+
+  const rows = pessoas
+    .map((p) => {
+      const gComm = commissions.filter((c) => c.gestorId === p.id);
+      const totalGerado = gComm.reduce((s, c) => s + c.amount, 0);
+      const totalSacado = withdrawals.filter((w) => w.gestorId === p.id).reduce((s, w) => s + w.amount, 0);
+      return { id: p.id, name: p.name, role: p.role, rank: p.rank, totalGerado, totalSacado, saldo: totalGerado - totalSacado, servicosAceitos: gComm.length };
+    })
+    .filter((r) => r.totalGerado > 0 || r.totalSacado > 0)
+    .sort((a, b) => b.totalGerado - a.totalGerado);
+
+  res.json(rows);
+});
+
+// ---------------------------------------------------------------------
+// FERRAMENTAS E ASSINATURAS
+// ---------------------------------------------------------------------
+
+function serializeTool(t) {
+  const today = todayUTC();
+  let diasParaVencer = null;
+  let diasAtraso = null;
+  if (t.renewalDate) {
+    const dias = Math.round((startOfDay(t.renewalDate) - today) / 86400000);
+    if (dias >= 0) diasParaVencer = dias;
+    else diasAtraso = Math.abs(dias);
+  }
+  return {
+    id: t.id,
+    name: t.name,
+    category: t.category,
+    monthlyValue: t.monthlyValue,
+    renewalDate: t.renewalDate,
+    status: t.status,
+    responsible: t.responsible,
+    url: t.url,
+    notes: t.notes,
+    createdAt: t.createdAt,
+    diasParaVencer,
+    diasAtraso,
+  };
+}
+
+router.get("/ferramentas", async (req, res) => {
+  const rows = await prisma.adminTool.findMany({ orderBy: [{ renewalDate: "asc" }, { name: "asc" }] });
+  res.json(rows.map(serializeTool));
+});
+
+router.post("/ferramentas", async (req, res) => {
+  const { name, category, monthlyValue, renewalDate, status, responsible, url, notes } = req.body || {};
+  if (!name || !String(name).trim()) return res.status(400).json({ error: "Informe o nome da ferramenta." });
+  const created = await prisma.adminTool.create({
+    data: {
+      name: String(name).trim(),
+      category: category || null,
+      monthlyValue: monthlyValue != null && monthlyValue !== "" ? Number(monthlyValue) : null,
+      renewalDate: toDateOrNull(renewalDate),
+      status: status || "ATIVO",
+      responsible: responsible || null,
+      url: url || null,
+      notes: notes || null,
+    },
+  });
+  res.status(201).json(serializeTool(created));
+});
+
+router.patch("/ferramentas/:id", async (req, res) => {
+  const existing = await prisma.adminTool.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Ferramenta não encontrada." });
+  const { name, category, monthlyValue, renewalDate, status, responsible, url, notes } = req.body || {};
+  const data = {};
+  if (name !== undefined) data.name = String(name).trim();
+  if (category !== undefined) data.category = category || null;
+  if (monthlyValue !== undefined) data.monthlyValue = monthlyValue != null && monthlyValue !== "" ? Number(monthlyValue) : null;
+  if (renewalDate !== undefined) data.renewalDate = toDateOrNull(renewalDate);
+  if (status !== undefined) data.status = status;
+  if (responsible !== undefined) data.responsible = responsible || null;
+  if (url !== undefined) data.url = url || null;
+  if (notes !== undefined) data.notes = notes || null;
+  const updated = await prisma.adminTool.update({ where: { id: req.params.id }, data });
+  res.json(serializeTool(updated));
+});
+
+router.delete("/ferramentas/:id", async (req, res) => {
+  const existing = await prisma.adminTool.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Ferramenta não encontrada." });
+  const updated = await prisma.adminTool.update({ where: { id: req.params.id }, data: { status: "CANCELADO" } });
+  res.json(serializeTool(updated));
+});
+
+// ---------------------------------------------------------------------
+// FORNECEDORES
+// ---------------------------------------------------------------------
+
+router.get("/fornecedores", async (req, res) => {
+  const rows = await prisma.adminSupplier.findMany({ orderBy: { name: "asc" } });
+  const expenses = await prisma.adminExpense.findMany({ where: { status: { not: "CANCELADO" }, NOT: { supplier: null } }, select: { supplier: true, amount: true } });
+  const spendByName = new Map();
+  for (const e of expenses) {
+    const key = (e.supplier || "").trim().toLowerCase();
+    if (!key) continue;
+    spendByName.set(key, (spendByName.get(key) || 0) + e.amount);
+  }
+  const list = rows.map((s) => ({
+    id: s.id,
+    name: s.name,
+    category: s.category,
+    contact: s.contact,
+    notes: s.notes,
+    status: s.status,
+    createdAt: s.createdAt,
+    // Estimado casando o nome do fornecedor com o campo de texto livre
+    // `supplier` já usado em Despesas — não há chave estrangeira entre os
+    // dois por enquanto (ver comentário no schema.prisma).
+    totalGasto: spendByName.get(s.name.trim().toLowerCase()) || 0,
+  }));
+  res.json(list);
+});
+
+router.post("/fornecedores", async (req, res) => {
+  const { name, category, contact, notes, status } = req.body || {};
+  if (!name || !String(name).trim()) return res.status(400).json({ error: "Informe o nome do fornecedor." });
+  const created = await prisma.adminSupplier.create({
+    data: { name: String(name).trim(), category: category || null, contact: contact || null, notes: notes || null, status: status || "ATIVO" },
+  });
+  res.status(201).json({ ...created, totalGasto: 0 });
+});
+
+router.patch("/fornecedores/:id", async (req, res) => {
+  const existing = await prisma.adminSupplier.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Fornecedor não encontrado." });
+  const { name, category, contact, notes, status } = req.body || {};
+  const data = {};
+  if (name !== undefined) data.name = String(name).trim();
+  if (category !== undefined) data.category = category || null;
+  if (contact !== undefined) data.contact = contact || null;
+  if (notes !== undefined) data.notes = notes || null;
+  if (status !== undefined) data.status = status;
+  const updated = await prisma.adminSupplier.update({ where: { id: req.params.id }, data });
+  res.json(updated);
+});
+
+router.delete("/fornecedores/:id", async (req, res) => {
+  const existing = await prisma.adminSupplier.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Fornecedor não encontrado." });
+  const updated = await prisma.adminSupplier.update({ where: { id: req.params.id }, data: { status: "INATIVO" } });
+  res.json(updated);
+});
+
 module.exports = router;
