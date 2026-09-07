@@ -56,3 +56,44 @@ html, body {
 .pill-PENDENTE_PAGAMENTO { background: rgba(240, 180, 41, 0.14); color: #f0b429; }
 .pill-ONBOARDING { background: rgba(255, 122, 26, 0.15); color: #ff9142; }
 .pill-CANCELADO { background: rgba(255, 92, 92, 0.14); color: #ff5c5c; }
+
+/* --- Portal do paciente: cores configuráveis pelo profissional ---------- */
+/* O wrapper `.patient-themed` recebe as variáveis --pb-* inline (calculadas
+   em frontend/lib/patientTheme.js a partir de client.brandBgColor/brandAccentColor).
+   Essas regras reabrem as mesmas classes utilitárias do Tailwind que o portal
+   já usa e as redirecionam pra essas variáveis, com fallback pro hex atual —
+   então quem nunca configurou uma cor não vê NENHUMA mudança visual. Cores
+   semânticas (success/warning/danger) ficam de fora de propósito. */
+.patient-themed { color-scheme: light dark; }
+
+/* Nota: a barra lateral/topo (bg-sidebar) NÃO entra nesse tema de propósito —
+   fica sempre no preto padrão da TurbinaADS, como uma "moldura" neutra da
+   marca; só a área de conteúdo (fundo + cards + texto + detalhes) muda de
+   cor conforme a escolha do profissional. */
+.patient-themed.bg-bg, .patient-themed .bg-bg { background-color: var(--pb-bg, #0b0b0c); }
+.patient-themed .bg-surface { background-color: var(--pb-surface, #161616); }
+.patient-themed .bg-surface2 { background-color: var(--pb-surface2, #1f1f20); }
+.patient-themed .border-border { border-color: var(--pb-border, #2b2a28); }
+.patient-themed .text-ink { color: var(--pb-ink, #f5f3ef); }
+.patient-themed .text-inksoft { color: var(--pb-inksoft, #b6b0a6); }
+.patient-themed .text-inkfaint { color: var(--pb-inkfaint, #79746c); }
+
+.patient-themed .bg-accent { background-color: var(--pb-accent, #ff7a1a); }
+.patient-themed .text-accent { color: var(--pb-accent, #ff7a1a); }
+.patient-themed .border-accent { border-color: var(--pb-accent, #ff7a1a); }
+.patient-themed .bg-accentink { background-color: var(--pb-accentink, #e0630a); }
+.patient-themed .bg-accentsoft { background-color: var(--pb-accentsoft, #2b1608); }
+.patient-themed .hover\:bg-accent:hover { background-color: var(--pb-accent, #ff7a1a); }
+.patient-themed .hover\:bg-accentink:hover { background-color: var(--pb-accentink, #e0630a); }
+.patient-themed .hover\:text-accent:hover { color: var(--pb-accent, #ff7a1a); }
+.patient-themed .hover\:border-accent:hover { border-color: var(--pb-accent, #ff7a1a); }
+.patient-themed .focus\:border-accent:focus { border-color: var(--pb-accent, #ff7a1a); }
+/* Texto branco fixo em cima de um botão/pill accent — troca pra
+   --pb-onaccent, senão um accent claro (branco/bege) deixaria o texto
+   ilegível (branco em cima de branco). */
+.patient-themed .bg-accent.text-white { color: var(--pb-onaccent, #ffffff); }
+
+/* Variante com opacidade (ex: bg-bg/85) usada no header fixo de conteúdo do
+   portal — color-mix() reaplica a opacidade em cima da variável. */
+.patient-themed .bg-bg\/85 { background-color: color-mix(in srgb, var(--pb-bg, #0b0b0c) 85%, transparent); }
+.patient-themed .bg-bg\/90 { background-color: color-mix(in srgb, var(--pb-bg, #0b0b0c) 90%, transparent); }

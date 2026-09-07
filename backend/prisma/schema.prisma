@@ -82,6 +82,8 @@ model User {
   commissions    Commission[]
   withdrawals    WithdrawalRequest[]
   aiMessages     AiMessage[]
+  aiReferenceImages AiReferenceImage[]
+  clientMetricEntries ClientMetricEntry[]
 
   // Set only for role = CLIENTE: which client's portal this login can see.
   clientId String?
@@ -127,6 +129,13 @@ model Client {
   brandName    String?
   logoBase64   String?  @db.Text
   logoMimeType String?
+  // Cor do portal dos pacientes desse cliente — dois campos independentes
+  // (fundo principal e cor de detalhe/botões), cada um "branco" | "azul" |
+  // "rosa" | "bege" | "preto". null = mantém o visual escuro padrão do
+  // sistema (nada muda pra quem não configurar). Mapeado pra hex no
+  // frontend (lib/patientTheme.js).
+  brandBgColor     String?
+  brandAccentColor String?
 
   gestorId String?
   gestor   User?   @relation("GestorClients", fields: [gestorId], references: [id])
@@ -157,6 +166,50 @@ model Client {
   contentPosts ContentPost[]
   adAccounts   AdAccount[]
   commissions  Commission[]
+  metricEntries ClientMetricEntry[]
+}
+
+// Registro manual de métricas de campanha (enquanto o app do Meta for
+// Developers não é aprovado — ver seção 0 do plano) + histórico de
+// otimizações: o gestor cola aqui as métricas do Gerenciador de Anúncios
+// (CPA, CPL, mensagens iniciadas etc.), o que o cliente está falando sobre
+// os leads, e o que estava bom/ruim naquele período — tudo com data, pra
+// virar uma linha do tempo consultável (por gente e pela IA, via a
+// ferramenta detalhes_cliente em backend/src/routes/ai.js).
+model ClientMetricEntry {
+  id       String @id @default(cuid())
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  periodLabel String? // ex: "01/09 a 07/09" ou nome da campanha — livre
+
+  spend               Float?
+  cpa                 Float?
+  cpl                 Float?
+  messagesStarted     Int?
+  costPerConversation Float?
+  costPerLead         Float?
+  costPerPurchase     Float?
+  leadsCount          Int?
+  closedCount         Int?
+
+  leadQualityNote String? @db.Text // o que o cliente está falando sobre os leads (curioso, qualificado etc.)
+  whatWorked      String? @db.Text // o que estava bom nesse período
+  whatFailed      String? @db.Text // o que estava ruim / o que precisa mudar (criativo, público, oferta...)
+
+  // Relatório exportado do Gerenciador de Anúncios anexado como referência —
+  // guardado como base64, mesmo padrão já usado em outros arquivos do
+  // sistema (sem precisar de S3/Cloudinary).
+  fileName     String?
+  fileMimeType String?
+  fileBase64   String? @db.Text
+
+  createdAt DateTime @default(now())
+
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([clientId, createdAt])
 }
 
 // Uma comissão de R$50 por serviço aceito, lançada pro gestor responsável
@@ -352,6 +405,13 @@ model Patient {
   requestedSessionAt DateTime?
   requestNote        String?
 
+  // Confirmação manual de presença — datas (do array calculado em
+  // sessionSchedule.dates) que o profissional marcou explicitamente como
+  // "sessão realizada", em vez de inferir isso só pela data já ter passado
+  // (o que marcava uma sessão como feita antes mesmo dela acontecer, se
+  // fosse hoje). Alternado por PATCH /api/patients/:id/attendance.
+  attendedSessionDates DateTime[] @default([])
+
   clientId String
   client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
@@ -472,4 +532,22 @@ model AiMessage {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, assistantKey, createdAt])
+}
+
+// Biblioteca de imagens de referência pra geração de imagem com IA —
+// compartilhada entre sócio/gestor (não é por login individual), pra poder
+// selecionar uma ou várias como base de uma geração nova sem ter que reenviar
+// o arquivo toda vez. Guardada como base64 no Postgres, mesmo padrão já usado
+// pra logo/avatar/arquivos de cliente (sem precisar de S3/Cloudinary).
+model AiReferenceImage {
+  id          String   @id @default(cuid())
+  name        String?
+  mimeType    String
+  dataBase64  String   @db.Text
+  createdAt   DateTime @default(now())
+
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
 }

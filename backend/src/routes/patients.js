@@ -120,6 +120,39 @@ router.delete("/:id", async (req, res) => {
   res.status(204).end();
 });
 
+// Marks (or unmarks) one specific scheduled session date as "attended" —
+// separate from the automatic date-passed calculation in sessionSchedule.js,
+// which only knows the calendar date and would otherwise cross a session off
+// the moment midnight passes, even hours before it actually happens. This
+// lets the professional confirm attendance explicitly, session by session.
+router.patch("/:id/attendance", async (req, res) => {
+  const existing = await assertOwnPatient(req, req.params.id);
+  if (!existing) return res.status(404).json({ error: "Paciente não encontrado." });
+  const { date, attended } = req.body || {};
+  if (!date) return res.status(400).json({ error: "Informe a data da sessão." });
+  const targetTime = new Date(date).getTime();
+  if (Number.isNaN(targetTime)) return res.status(400).json({ error: "Data inválida." });
+
+  const current = (existing.attendedSessionDates || []).map((d) => new Date(d).getTime());
+  const isMarked = current.includes(targetTime);
+  const wantMarked = attended !== undefined ? !!attended : !isMarked;
+
+  let next;
+  if (wantMarked && !isMarked) {
+    next = [...current, targetTime];
+  } else if (!wantMarked && isMarked) {
+    next = current.filter((t) => t !== targetTime);
+  } else {
+    next = current;
+  }
+
+  const patient = await prisma.patient.update({
+    where: { id: req.params.id },
+    data: { attendedSessionDates: next.map((t) => new Date(t)) },
+  });
+  res.json({ attendedSessionDates: patient.attendedSessionDates, sessionSchedule: computeSessionSchedule(patient) });
+});
+
 router.get("/:id/notes", async (req, res) => {
   const existing = await assertOwnPatient(req, req.params.id);
   if (!existing) return res.status(404).json({ error: "Paciente não encontrado." });

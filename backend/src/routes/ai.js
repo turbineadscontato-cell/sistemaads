@@ -120,7 +120,7 @@ const STAFF_TOOLS = [
   {
     name: "detalhes_cliente",
     description:
-      "Busca os dados reais de UM cliente específico da agência pelo nome: status, plano, valor mensal, verba diária, criativo ativo, dia de otimização, últimos pagamentos, tarefas em aberto e contas de anúncio vinculadas. Use sempre que o usuário mencionar um cliente pelo nome e a resposta depender de números/dados reais — nunca invente esses dados.",
+      "Busca os dados reais de UM cliente específico da agência pelo nome: status, plano, valor mensal, verba diária, criativo ativo, dia de otimização, últimos pagamentos, tarefas em aberto, contas de anúncio vinculadas e o histórico recente de métricas do Meta Ads lançado manualmente (CPA, CPL, mensagens iniciadas, custo por lead/conversa/compra, o que o cliente disse sobre a qualidade dos leads, o que funcionou e o que não funcionou em cada otimização). Use sempre que o usuário mencionar um cliente pelo nome e a resposta depender de números/dados reais, inclusive pra sugerir o que ajustar numa campanha — nunca invente esses dados.",
     input_schema: {
       type: "object",
       properties: { nome: { type: "string", description: "Nome (ou parte do nome) do cliente a buscar." } },
@@ -165,6 +165,9 @@ async function toolDetalhesCliente(req, input) {
       tasks: { where: { status: { not: "CONCLUIDA" } }, orderBy: { dueDate: "asc" }, take: 8 },
       adAccounts: true,
       gestor: { select: { name: true } },
+      // Só os últimos 6 lançamentos manuais de métricas — o bastante pra IA
+      // enxergar tendência recente sem estourar o tamanho da resposta.
+      metricEntries: { orderBy: { createdAt: "desc" }, take: 6 },
     },
   });
   if (!client) return { erro: `Nenhum cliente chamado "${nome}" encontrado (ou sem acesso a ele).` };
@@ -184,6 +187,23 @@ async function toolDetalhesCliente(req, input) {
     pagamentosRecentes: client.payments.map((p) => ({ valor: p.amount, vencimento: p.dueDate, status: p.status })),
     tarefasEmAberto: client.tasks.map((t) => ({ titulo: t.title, prazo: t.dueDate, prioridade: t.priority })),
     contasDeAnuncioVinculadas: client.adAccounts.map((a) => ({ nome: a.name, moeda: a.currency, status: a.accountStatus })),
+    historicoMetricasMeta: client.metricEntries.map((m) => ({
+      data: m.createdAt,
+      periodo: m.periodLabel,
+      investimento: m.spend,
+      cpa: m.cpa,
+      cpl: m.cpl,
+      mensagensIniciadas: m.messagesStarted,
+      custoPorConversa: m.costPerConversation,
+      custoPorLead: m.costPerLead,
+      custoPorCompra: m.costPerPurchase,
+      leads: m.leadsCount,
+      fechados: m.closedCount,
+      oQueOClienteDisse: m.leadQualityNote,
+      oQueFuncionou: m.whatWorked,
+      oQueNaoFuncionou: m.whatFailed,
+      temArquivoAnexado: !!m.fileBase64,
+    })),
   };
 }
 
@@ -530,9 +550,73 @@ router.post("/extract-spreadsheet", async (req, res) => {
 // sabendo que hoje só sócio/gestor enxergam essa tela no frontend.
 const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
 const ALLOWED_IMAGE_SIZES = new Set(["1024x1024", "1536x1024", "1024x1536"]);
+const MAX_REFERENCE_IMAGES_PER_GENERATION = 4;
+const MAX_REFERENCE_IMAGE_UPLOAD = 20; // por chamada de upload em lote
 
-router.post("/generate-image", requireRole("SOCIO", "GESTOR"), async (req, res) => {
-  const { prompt, size } = req.body || {};
+const requireImageStaff = requireRole("SOCIO", "GESTOR");
+
+// Biblioteca de imagens de referência: compartilhada entre sócio/gestor
+// (não é por login), pra poder selecionar uma ou várias como base de uma
+// geração nova sem ter que reenviar o arquivo toda vez — o "aprendizado"
+// fica salvo, não só na sessão aberta.
+router.get("/reference-images", requireImageStaff, async (req, res) => {
+  const images = await prisma.aiReferenceImage.findMany({
+    orderBy: { createdAt: "desc" },
+    select: { id: true, name: true, mimeType: true, dataBase64: true, createdAt: true, createdBy: { select: { name: true } } },
+  });
+  res.json({
+    images: images.map((img) => ({
+      id: img.id,
+      name: img.name,
+      mimeType: img.mimeType,
+      dataBase64: img.dataBase64,
+      createdAt: img.createdAt,
+      createdByName: img.createdBy?.name || null,
+    })),
+  });
+});
+
+router.post("/reference-images", requireImageStaff, async (req, res) => {
+  const { images } = req.body || {};
+  if (!Array.isArray(images) || images.length === 0) {
+    return res.status(400).json({ error: "Envie ao menos uma imagem." });
+  }
+  if (images.length > MAX_REFERENCE_IMAGE_UPLOAD) {
+    return res.status(400).json({ error: `Envie no máximo ${MAX_REFERENCE_IMAGE_UPLOAD} imagens de cada vez.` });
+  }
+  for (const img of images) {
+    if (!img?.dataBase64 || img.dataBase64.length > MAX_IMAGE_B64_CHARS) {
+      return res.status(413).json({ error: "Uma das imagens é grande demais (máx. ~4,5MB cada)." });
+    }
+  }
+  const created = await prisma.$transaction(
+    images.map((img) =>
+      prisma.aiReferenceImage.create({
+        data: {
+          name: img.name || null,
+          mimeType: img.mimeType || "image/png",
+          dataBase64: img.dataBase64,
+          createdById: req.user.id,
+        },
+        select: { id: true, name: true, mimeType: true, dataBase64: true, createdAt: true },
+      })
+    )
+  );
+  res.status(201).json({ images: created });
+});
+
+router.delete("/reference-images/:id", requireImageStaff, async (req, res) => {
+  const img = await prisma.aiReferenceImage.findUnique({ where: { id: req.params.id } });
+  if (!img) return res.status(404).json({ error: "Imagem não encontrada." });
+  if (req.user.role !== "SOCIO" && img.createdById !== req.user.id) {
+    return res.status(403).json({ error: "Só quem enviou essa imagem (ou o sócio) pode removê-la." });
+  }
+  await prisma.aiReferenceImage.delete({ where: { id: req.params.id } });
+  res.status(204).end();
+});
+
+router.post("/generate-image", requireImageStaff, async (req, res) => {
+  const { prompt, size, referenceImageIds } = req.body || {};
   if (!prompt || !String(prompt).trim()) {
     return res.status(400).json({ error: "Descreva a imagem que você quer gerar." });
   }
@@ -543,18 +627,47 @@ router.post("/generate-image", requireRole("SOCIO", "GESTOR"), async (req, res) 
     });
   }
   const finalSize = ALLOWED_IMAGE_SIZES.has(size) ? size : "1024x1024";
+  const finalPrompt = String(prompt).trim();
+
+  const ids = Array.isArray(referenceImageIds) ? referenceImageIds.slice(0, MAX_REFERENCE_IMAGES_PER_GENERATION) : [];
 
   try {
-    const r = await fetch("https://api.openai.com/v1/images/generations", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: OPENAI_IMAGE_MODEL, prompt: String(prompt).trim(), size: finalSize, n: 1 }),
-    });
-    const data = await r.json().catch(() => null);
-    if (!r.ok) {
-      throw new Error(data?.error?.message || "Erro ao gerar a imagem.");
+    let b64;
+    if (ids.length > 0) {
+      // Usa as imagens selecionadas da biblioteca como base (endpoint de
+      // edição da OpenAI, que aceita mais de uma imagem de referência) em
+      // vez de gerar do zero só a partir do texto.
+      const refImages = await prisma.aiReferenceImage.findMany({ where: { id: { in: ids } } });
+      if (refImages.length === 0) throw new Error("As imagens de referência selecionadas não foram encontradas.");
+
+      const form = new FormData();
+      form.append("model", OPENAI_IMAGE_MODEL);
+      form.append("prompt", finalPrompt);
+      form.append("size", finalSize);
+      refImages.forEach((img, i) => {
+        const buf = Buffer.from(img.dataBase64, "base64");
+        const blob = new Blob([buf], { type: img.mimeType || "image/png" });
+        form.append("image[]", blob, img.name || `referencia-${i + 1}.png`);
+      });
+
+      const r = await fetch("https://api.openai.com/v1/images/edits", {
+        method: "POST",
+        headers: { authorization: `Bearer ${apiKey}` },
+        body: form,
+      });
+      const data = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(data?.error?.message || "Erro ao gerar a imagem a partir das referências.");
+      b64 = data?.data?.[0]?.b64_json;
+    } else {
+      const r = await fetch("https://api.openai.com/v1/images/generations", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: OPENAI_IMAGE_MODEL, prompt: finalPrompt, size: finalSize, n: 1 }),
+      });
+      const data = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(data?.error?.message || "Erro ao gerar a imagem.");
+      b64 = data?.data?.[0]?.b64_json;
     }
-    const b64 = data?.data?.[0]?.b64_json;
     if (!b64) throw new Error("A IA não retornou uma imagem — tente descrever de outro jeito.");
     res.json({ imageBase64: b64 });
   } catch (err) {

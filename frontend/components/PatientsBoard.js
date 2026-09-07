@@ -151,6 +151,28 @@ function packageStatus(p) {
 }
 const DOT_CLASS = { success: "bg-success", warning: "bg-warning", danger: "bg-danger" };
 
+// Confirmação manual de presença — separada do cálculo automático de
+// "completed" (que só olha se a data já passou, ver sessionSchedule.js no
+// backend). Compara por horário exato porque as datas do pacote já incluem o
+// horário da sessão quando ele está definido.
+function isAttended(p, dateIso) {
+  const t = new Date(dateIso).getTime();
+  return (p.attendedSessionDates || []).some((a) => new Date(a).getTime() === t);
+}
+// Mesma construção de data (UTC, com o horário da sessão aplicado) usada em
+// computeScheduleClientSide — assim "hoje" bate certinho com a data do
+// pacote quando ela cai no mesmo dia, permitindo marcar presença pelo popup
+// da agenda semanal sem precisar abrir o cadastro completo.
+function todaySessionDateTime(p) {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  if (p.sessionTime && /^\d{1,2}:\d{2}$/.test(p.sessionTime)) {
+    const [h, m] = p.sessionTime.split(":").map(Number);
+    d.setUTCHours(h, m, 0, 0);
+  }
+  return d.toISOString();
+}
+
 export default function PatientsBoard() {
   const [patients, setPatients] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -175,6 +197,9 @@ export default function PatientsBoard() {
   // the button did nothing at all.
   const [savingEdit, setSavingEdit] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
+  // Popup rápido ao clicar num card na Agenda semanal — { patientId, day }.
+  const [agendaMenu, setAgendaMenu] = useState(null);
+  const [togglingAttendance, setTogglingAttendance] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -464,6 +489,18 @@ export default function PatientsBoard() {
   function generateMeetLink() {
     window.open("https://meet.google.com/new", "_blank", "noopener,noreferrer");
     setEditingMeetLink(true);
+  }
+
+  async function toggleAttendance(p, dateIso, attended) {
+    setTogglingAttendance(dateIso);
+    try {
+      await api(`/api/patients/${p.id}/attendance`, { method: "PATCH", body: { date: dateIso, attended } });
+      load();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setTogglingAttendance(null);
+    }
   }
 
   async function removePatient(p) {
@@ -790,18 +827,33 @@ export default function PatientsBoard() {
                   {liveSchedule && (
                     <div className="bg-surface border border-border rounded-xl px-4 py-3.5 space-y-2.5">
                       <div className="flex items-center justify-between text-[12.5px]">
-                        <span className="text-inksoft font-semibold">{liveSchedule.completed}/{liveSchedule.total} sessões realizadas</span>
+                        <span className="text-inksoft font-semibold">
+                          {liveSchedule.dates.filter((d) => isAttended(p, d)).length}/{liveSchedule.total} sessões confirmadas
+                        </span>
                       </div>
+                      <div className="text-[11px] text-inkfaint -mt-1">Marque a caixinha quando a sessão realmente acontecer — antes disso ela fica na lista normalmente, mesmo que a data já tenha passado.</div>
                       <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
-                        {liveSchedule.dates.map((d, i) => (
-                          <div key={d} className={`flex items-center justify-between gap-3 text-[12.5px] px-3 py-2 rounded-lg ${new Date(d) < new Date() ? "text-inkfaint line-through bg-transparent" : "text-ink bg-surface2/70"}`}>
-                            <span className="font-medium">Sessão {i + 1}</span>
-                            <span className="mono flex items-center gap-2">
-                              <span className="text-[10.5px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-accentsoft text-accent font-semibold">{fmtScheduleWeekday(d)}</span>
-                              {fmtScheduleDateTime(d)}
-                            </span>
-                          </div>
-                        ))}
+                        {liveSchedule.dates.map((d, i) => {
+                          const attended = isAttended(p, d);
+                          const isPast = new Date(d) < new Date();
+                          return (
+                            <label key={d} className={`flex items-center justify-between gap-3 text-[12.5px] px-3 py-2 rounded-lg cursor-pointer transition ${
+                              attended ? "text-inkfaint line-through bg-transparent" : isPast ? "text-ink bg-warningsoft/60" : "text-ink bg-surface2/70"
+                            }`}>
+                              <span className="flex items-center gap-2 font-medium">
+                                <input type="checkbox" checked={attended} disabled={togglingAttendance === d}
+                                  onChange={(e) => toggleAttendance(p, d, e.target.checked)}
+                                  className="accent-accent w-3.5 h-3.5 shrink-0" />
+                                Sessão {i + 1}
+                              </span>
+                              <span className="mono flex items-center gap-2">
+                                <span className="text-[10.5px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-accentsoft text-accent font-semibold">{fmtScheduleWeekday(d)}</span>
+                                {fmtScheduleDateTime(d)}
+                                {isPast && !attended && <span className="text-[10px] text-warning font-semibold">confirmar</span>}
+                              </span>
+                            </label>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -955,13 +1007,14 @@ export default function PatientsBoard() {
                         key={p.id}
                         draggable
                         onDragStart={(e) => e.dataTransfer.setData("text/plain", JSON.stringify({ id: p.id, fromDay: day.key }))}
-                        className={`bg-surface border border-border rounded-lg p-2 shadow-sm cursor-grab active:cursor-grabbing hover:border-accent/50 transition ${movingId === p.id ? "opacity-50" : ""}`}
+                        onClick={() => setAgendaMenu({ patientId: p.id, day: day.key })}
+                        className={`bg-surface border border-border rounded-lg p-2 shadow-sm cursor-pointer active:cursor-grabbing hover:border-accent/50 transition ${movingId === p.id ? "opacity-50" : ""}`}
                       >
                         <div className="text-xs font-medium text-ink truncate">{p.name}</div>
                         <div className="flex items-center justify-between gap-1 mt-0.5">
                           <span className="text-[10px] mono text-inkfaint">{p.sessionTime || "sem horário"}</span>
                           <button
-                            onClick={() => removeDay(p.id, day.key)}
+                            onClick={(e) => { e.stopPropagation(); removeDay(p.id, day.key); }}
                             title="Remover deste dia"
                             className="text-[10px] text-inkfaint hover:text-danger leading-none"
                           >
@@ -983,6 +1036,75 @@ export default function PatientsBoard() {
           )}
         </div>
       )}
+
+      {/* Popup rápido ao clicar num card da Agenda semanal — as ações mais
+          comuns (iniciar, confirmar presença, cancelar o dia, remarcar,
+          excluir) sem precisar abrir o cadastro completo. */}
+      {agendaMenu && (() => {
+        const p = patients.find((x) => x.id === agendaMenu.patientId);
+        if (!p) return null;
+        const dayLabel = WEEKDAYS.find((w) => w.key === agendaMenu.day)?.label || "";
+        const todayIso = todaySessionDateTime(p);
+        const attendedToday = isAttended(p, todayIso);
+        return (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center px-4">
+            <div onClick={() => setAgendaMenu(null)} className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+            <div className="relative w-full max-w-sm bg-surface border border-border rounded-2xl shadow-2xl overflow-hidden">
+              <div className="px-5 py-4 border-b border-border">
+                <div className="text-[11px] uppercase tracking-wider text-inkfaint">{dayLabel}</div>
+                <h3 className="font-display font-semibold text-lg text-ink truncate">{p.name}</h3>
+              </div>
+              <div className="p-2.5 space-y-1">
+                <button
+                  onClick={() => {
+                    if (p.meetLink) {
+                      window.open(p.meetLink, "_blank", "noopener,noreferrer");
+                      setAgendaMenu(null);
+                    } else {
+                      alert("Esse paciente ainda não tem um link de sessão — configure em \"Abrir cadastro completo\".");
+                    }
+                  }}
+                  className="w-full text-left px-3.5 py-2.5 rounded-xl text-sm text-ink hover:bg-surface2 transition flex items-center gap-2.5"
+                >
+                  <span className="w-7 h-7 rounded-lg bg-accentsoft text-accent flex items-center justify-center shrink-0 text-sm">▶</span>
+                  Iniciar sessão
+                </button>
+                <button
+                  onClick={() => { toggleAttendance(p, todayIso, !attendedToday); setAgendaMenu(null); }}
+                  className="w-full text-left px-3.5 py-2.5 rounded-xl text-sm text-ink hover:bg-surface2 transition flex items-center gap-2.5"
+                >
+                  <span className="w-7 h-7 rounded-lg bg-successsoft text-success flex items-center justify-center shrink-0 text-sm">✓</span>
+                  {attendedToday ? "Desmarcar sessão de hoje como feita" : "Marcar sessão de hoje como feita"}
+                </button>
+                <button
+                  onClick={() => { removeDay(p.id, agendaMenu.day); setAgendaMenu(null); }}
+                  className="w-full text-left px-3.5 py-2.5 rounded-xl text-sm text-ink hover:bg-surface2 transition flex items-center gap-2.5"
+                >
+                  <span className="w-7 h-7 rounded-lg bg-warningsoft text-warning flex items-center justify-center shrink-0 text-sm">⏸</span>
+                  Cancelar {dayLabel.toLowerCase()} (remover deste dia)
+                </button>
+                <button
+                  onClick={() => { setAgendaMenu(null); openCard(p); }}
+                  className="w-full text-left px-3.5 py-2.5 rounded-xl text-sm text-ink hover:bg-surface2 transition flex items-center gap-2.5"
+                >
+                  <span className="w-7 h-7 rounded-lg bg-surface2 text-inksoft flex items-center justify-center shrink-0 text-sm">⏱</span>
+                  Remarcar horário / abrir cadastro completo
+                </button>
+                <button
+                  onClick={() => { setAgendaMenu(null); removePatient(p); }}
+                  className="w-full text-left px-3.5 py-2.5 rounded-xl text-sm text-danger hover:bg-dangersoft transition flex items-center gap-2.5"
+                >
+                  <span className="w-7 h-7 rounded-lg bg-dangersoft text-danger flex items-center justify-center shrink-0 text-sm">×</span>
+                  Excluir paciente
+                </button>
+              </div>
+              <div className="px-5 py-3 border-t border-border">
+                <button onClick={() => setAgendaMenu(null)} className="text-[12.5px] text-inkfaint hover:text-ink transition">Fechar</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -56,6 +56,44 @@ function readAsBase64(file) {
   });
 }
 
+const REF_IMAGE_MAX_DIM = 1024;
+
+// Redimensiona uma imagem de referência no navegador antes de subir pra
+// biblioteca — mesmo princípio já usado no avatar (components/AvatarButton.js),
+// só que num tamanho maior (serve de base pra geração, não só uma fotinho de
+// perfil), pra não estourar o limite de tamanho aceito pelo backend nem levar
+// vários MB de câmera de celular pro Postgres à toa.
+function resizeReferenceImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Não consegui ler essa imagem."));
+    reader.onload = () => {
+      const img = new window.Image();
+      img.onerror = () => reject(new Error("Arquivo de imagem inválido."));
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > height && width > REF_IMAGE_MAX_DIM) {
+          height = Math.round(height * (REF_IMAGE_MAX_DIM / width));
+          width = REF_IMAGE_MAX_DIM;
+        } else if (height >= width && height > REF_IMAGE_MAX_DIM) {
+          width = Math.round(width * (REF_IMAGE_MAX_DIM / height));
+          height = REF_IMAGE_MAX_DIM;
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", 0.87).split(",").pop());
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function AIAssistants() {
   const [view, setView] = useState("chat"); // "chat" | "imagem"
   const [mode, setMode] = useState("traffic");
@@ -80,6 +118,16 @@ export default function AIAssistants() {
   const [imgResult, setImgResult] = useState(null); // { base64, prompt }
   const [imgHistory, setImgHistory] = useState([]);
 
+  // Biblioteca de imagens de referência — compartilhada entre sócio/gestor,
+  // salva no servidor (não só na memória da tela), pra selecionar uma ou
+  // várias como base de uma geração sem precisar reenviar o arquivo toda
+  // vez. null = ainda não carregada.
+  const [refImages, setRefImages] = useState(null);
+  const [refSelected, setRefSelected] = useState(() => new Set());
+  const [refUploading, setRefUploading] = useState(false);
+  const [refError, setRefError] = useState("");
+  const refFileInputRef = useRef(null);
+
   const messages = threads[mode] || [];
 
   const loadHistory = useCallback(async (m) => {
@@ -94,6 +142,14 @@ export default function AIAssistants() {
   useEffect(() => {
     if (threads[mode] === null) loadHistory(mode);
   }, [mode, threads, loadHistory]);
+
+  useEffect(() => {
+    if (view === "imagem" && refImages === null) {
+      api("/api/ai/reference-images")
+        .then((res) => setRefImages(res.images || []))
+        .catch(() => setRefImages([]));
+    }
+  }, [view, refImages]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -206,7 +262,10 @@ export default function AIAssistants() {
     setImgGenerating(true);
     setImgError("");
     try {
-      const res = await api("/api/ai/generate-image", { method: "POST", body: { prompt: imgPrompt.trim(), size: imgSize } });
+      const res = await api("/api/ai/generate-image", {
+        method: "POST",
+        body: { prompt: imgPrompt.trim(), size: imgSize, referenceImageIds: Array.from(refSelected) },
+      });
       const item = { base64: res.imageBase64, prompt: imgPrompt.trim() };
       setImgResult(item);
       setImgHistory((h) => [item, ...h].slice(0, MAX_IMAGE_HISTORY));
@@ -214,6 +273,51 @@ export default function AIAssistants() {
       setImgError(err.message);
     } finally {
       setImgGenerating(false);
+    }
+  }
+
+  async function handleRefFilesPicked(e) {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (files.length === 0) return;
+    setRefUploading(true);
+    setRefError("");
+    try {
+      const images = [];
+      for (const file of files) {
+        const dataBase64 = await resizeReferenceImage(file);
+        images.push({ name: file.name, mimeType: "image/jpeg", dataBase64 });
+      }
+      const res = await api("/api/ai/reference-images", { method: "POST", body: { images } });
+      setRefImages((r) => [...(res.images || []), ...(r || [])]);
+    } catch (err) {
+      setRefError(err.message);
+    } finally {
+      setRefUploading(false);
+    }
+  }
+
+  function toggleRefSelected(id) {
+    setRefSelected((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function deleteRefImage(id) {
+    if (!confirm("Remover essa imagem da biblioteca de referência? Não afeta imagens já geradas.")) return;
+    try {
+      await api(`/api/ai/reference-images/${id}`, { method: "DELETE" });
+      setRefImages((r) => (r || []).filter((img) => img.id !== id));
+      setRefSelected((s) => {
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+    } catch (err) {
+      setRefError(err.message);
     }
   }
 
@@ -324,6 +428,55 @@ export default function AIAssistants() {
           <p className="text-xs text-inkfaint">
             Gere imagens com IA a partir de uma descrição — útil para criativos de anúncio, capas e artes rápidas. Cada imagem gerada tem custo na conta OpenAI configurada pelo sócio.
           </p>
+
+          <div className="bg-surface border border-border rounded-xl shadow-sm p-3 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-medium text-ink">Imagens de referência (opcional)</p>
+                <p className="text-[11px] text-inkfaint">Selecione uma ou mais pra usar como base da geração — ficam salvas aqui pra reaproveitar depois, não somem ao sair da tela.</p>
+              </div>
+              <input ref={refFileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleRefFilesPicked} />
+              <button type="button" onClick={() => refFileInputRef.current?.click()} disabled={refUploading}
+                className="shrink-0 text-xs font-medium bg-surface2 border border-border text-inksoft hover:text-ink px-3 py-1.5 rounded-md transition disabled:opacity-60">
+                {refUploading ? "Enviando…" : "+ Adicionar imagens"}
+              </button>
+            </div>
+
+            {refError && <div className="text-xs text-danger bg-dangersoft border border-danger/30 rounded-lg px-3 py-2">{refError}</div>}
+
+            {refImages === null && <p className="text-[11px] text-inkfaint">Carregando biblioteca…</p>}
+            {refImages !== null && refImages.length === 0 && (
+              <p className="text-[11px] text-inkfaint">Nenhuma imagem salva ainda — adicione fotos, artes ou referências de estilo pra usar como base.</p>
+            )}
+            {refImages && refImages.length > 0 && (
+              <div className="flex gap-2 flex-wrap">
+                {refImages.map((img) => {
+                  const selected = refSelected.has(img.id);
+                  return (
+                    <div key={img.id} className="relative group">
+                      <button type="button" onClick={() => toggleRefSelected(img.id)} title={img.name || ""}
+                        className={`w-16 h-16 rounded-md overflow-hidden border-2 transition ${selected ? "border-accent ring-2 ring-accent/40" : "border-border"}`}>
+                        <img src={`data:${img.mimeType};base64,${img.dataBase64}`} alt={img.name || "referência"} className="w-full h-full object-cover" />
+                      </button>
+                      {selected && (
+                        <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-accent text-white text-[10px] flex items-center justify-center">✓</span>
+                      )}
+                      <button type="button" onClick={() => deleteRefImage(img.id)} title="Remover da biblioteca"
+                        className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-surface border border-border text-inkfaint hover:text-danger text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {refSelected.size > 0 && (
+              <p className="text-[11px] text-accent">
+                {refSelected.size} imagem{refSelected.size > 1 ? "ns" : ""} selecionada{refSelected.size > 1 ? "s" : ""} como base
+              </p>
+            )}
+          </div>
+
           <form onSubmit={generateImage} className="bg-surface border border-border rounded-xl shadow-sm p-3 space-y-2.5">
             <textarea value={imgPrompt} onChange={(e) => setImgPrompt(e.target.value)} rows={3}
               placeholder="Descreva a imagem que você quer gerar — ex.: &quot;anúncio para Instagram, mulher sorrindo em sessão de terapia, tons acolhedores, espaço para texto à esquerda&quot;"

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, getUser, clearSession } from "../../lib/api";
 import PortalShell from "../../components/PortalShell";
+import { getPatientThemeVars } from "../../lib/patientTheme";
 
 const WEEKDAYS = [
   { key: 0, label: "Domingo" },
@@ -185,8 +186,10 @@ export default function PatientPortal() {
   const brandLabel = patient.client?.brandName || patient.client?.name || "Portal do paciente";
   const logo = patient.client?.logoBase64;
   const attendanceDays = (patient.weekdays || []).map((d) => WEEKDAYS.find((w) => w.key === d)?.label).filter(Boolean);
+  const themeVars = getPatientThemeVars(patient.client?.brandBgColor, patient.client?.brandAccentColor);
 
   return (
+    <div className="patient-themed" style={themeVars}>
     <PortalShell
       brand={
         <div className="flex items-center gap-2.5 min-w-0">
@@ -388,5 +391,6 @@ export default function PatientPortal() {
           </div>
         )}
     </PortalShell>
+    </div>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { api } from "../lib/api";
+import { THEME_COLOR_OPTIONS } from "../lib/patientTheme";
 
 const MAX_LOGO_BYTES = 2_000_000; // ~2MB, keeps the base64 JSON request comfortably small
 
@@ -14,6 +15,8 @@ export default function BrandingSettings({ client, onChange }) {
   const [brandName, setBrandName] = useState(client.brandName || "");
   const [logoPreview, setLogoPreview] = useState(client.logoBase64 || null);
   const [logoMimeType, setLogoMimeType] = useState(client.logoMimeType || null);
+  const [bgColor, setBgColor] = useState(client.brandBgColor || null);
+  const [accentColor, setAccentColor] = useState(client.brandAccentColor || null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -43,7 +46,13 @@ export default function BrandingSettings({ client, onChange }) {
     try {
       await api("/api/clients/me/branding", {
         method: "PATCH",
-        body: { brandName: brandName || null, logoBase64: logoPreview || null, logoMimeType: logoMimeType || null },
+        body: {
+          brandName: brandName || null,
+          logoBase64: logoPreview || null,
+          logoMimeType: logoMimeType || null,
+          brandBgColor: bgColor || null,
+          brandAccentColor: accentColor || null,
+        },
       });
       onChange?.();
     } catch (err) {
@@ -95,6 +104,37 @@ export default function BrandingSettings({ client, onChange }) {
               )}
             </div>
           </div>
+        </div>
+
+        <div>
+          <label className="block text-[11px] text-inkfaint mb-1.5">Cor principal do portal (fundo)</label>
+          <p className="text-[10.5px] text-inkfaint mb-2">Hoje o padrão é escuro — se seus pacientes preferirem outra cor de fundo, escolha aqui.</p>
+          <div className="flex flex-wrap gap-2">
+            {THEME_COLOR_OPTIONS.map((opt) => (
+              <button key={opt.value} type="button" onClick={() => setBgColor(bgColor === opt.value ? null : opt.value)}
+                title={opt.label}
+                className={`w-9 h-9 rounded-full border-2 shrink-0 transition ${bgColor === opt.value ? "border-accent scale-110" : "border-border"}`}
+                style={{ background: opt.swatch }}>
+                {bgColor === opt.value && <span className="sr-only">{opt.label} selecionado</span>}
+              </button>
+            ))}
+          </div>
+          <div className="text-[10.5px] text-inkfaint mt-1.5">{bgColor ? THEME_COLOR_OPTIONS.find((o) => o.value === bgColor)?.label : "Padrão (escuro)"}</div>
+        </div>
+
+        <div>
+          <label className="block text-[11px] text-inkfaint mb-1.5">Cor de detalhe (botões e destaques)</label>
+          <div className="flex flex-wrap gap-2">
+            {THEME_COLOR_OPTIONS.map((opt) => (
+              <button key={opt.value} type="button" onClick={() => setAccentColor(accentColor === opt.value ? null : opt.value)}
+                title={opt.label}
+                className={`w-9 h-9 rounded-full border-2 shrink-0 transition ${accentColor === opt.value ? "border-accent scale-110" : "border-border"}`}
+                style={{ background: opt.swatch }}>
+                {accentColor === opt.value && <span className="sr-only">{opt.label} selecionado</span>}
+              </button>
+            ))}
+          </div>
+          <div className="text-[10.5px] text-inkfaint mt-1.5">{accentColor ? THEME_COLOR_OPTIONS.find((o) => o.value === accentColor)?.label : "Padrão (laranja)"}</div>
         </div>
 
         {error && <div className="text-xs text-danger bg-dangersoft border border-danger/30 rounded-lg px-3 py-2">{error}</div>}

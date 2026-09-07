@@ -21,7 +21,7 @@ router.get("/me", async (req, res) => {
   if (!patientId) return res.status(400).json({ error: "Login não vinculado a um paciente." });
   const patient = await prisma.patient.findUnique({
     where: { id: patientId },
-    include: { client: { select: { name: true, brandName: true, logoBase64: true, logoMimeType: true } } },
+    include: { client: { select: { name: true, brandName: true, logoBase64: true, logoMimeType: true, brandBgColor: true, brandAccentColor: true } } },
   });
   if (!patient) return res.status(404).json({ error: "Paciente não encontrado." });
   const { notes, ...safe } = patient; // internal notes field stays professional-only

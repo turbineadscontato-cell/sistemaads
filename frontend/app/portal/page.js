@@ -49,6 +49,16 @@ function currency(n) {
   if (n == null) return "—";
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
+// "Vence em 3 dias" / "Venceu há 2 dias" / "Vence hoje" — pro visual de
+// fatura, o cliente sabe de cara se está em dia sem precisar calcular.
+function dueDateHint(dueDate, status) {
+  if (!dueDate || status === "PAGO") return null;
+  const diffMs = new Date(dueDate).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0);
+  const days = Math.round(diffMs / 86400000);
+  if (days === 0) return "Vence hoje";
+  if (days > 0) return `Vence em ${days} dia${days === 1 ? "" : "s"}`;
+  return `Venceu há ${Math.abs(days)} dia${Math.abs(days) === 1 ? "" : "s"}`;
+}
 
 export default function ClientPortal() {
   const router = useRouter();
@@ -198,19 +208,39 @@ export default function ClientPortal() {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div className="bg-surface border border-border rounded-xl shadow-sm overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-border font-display font-semibold text-sm text-ink">Pagamentos</div>
-                <div className="divide-y divide-border max-h-64 overflow-y-auto">
-                  {client.payments.map((p) => (
-                    <div key={p.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
-                      <div>
-                        <div className="mono text-ink">{currency(p.amount)}</div>
-                        <div className="text-[10.5px] text-inkfaint">vence {fmtDate(p.dueDate)}</div>
-                      </div>
-                      <span className={`text-[10.5px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${p.status === "PAGO" ? "bg-successsoft text-success" : p.status === "ATRASADO" ? "bg-dangersoft text-danger" : "bg-warningsoft text-warning"}`}>
-                        {PAYMENT_LABEL[p.status]}
+                <div className="px-4 py-2.5 border-b border-border flex items-center justify-between gap-2">
+                  <span className="font-display font-semibold text-sm text-ink">Fatura — pagamentos à TurbinaADS</span>
+                  {(() => {
+                    const current = client.payments.find((p) => p.status !== "PAGO") || client.payments[0];
+                    if (!current) return null;
+                    const cls = current.status === "PAGO" ? "bg-successsoft text-success"
+                      : current.status === "ATRASADO" ? "bg-dangersoft text-danger"
+                      : "bg-warningsoft text-warning";
+                    return (
+                      <span className={`text-[10.5px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${cls}`}>
+                        {current.status === "PAGO" ? "Em dia" : PAYMENT_LABEL[current.status]}
                       </span>
-                    </div>
-                  ))}
+                    );
+                  })()}
+                </div>
+                <div className="divide-y divide-border max-h-72 overflow-y-auto">
+                  {client.payments.map((p) => {
+                    const hint = dueDateHint(p.dueDate, p.status);
+                    return (
+                      <div key={p.id} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
+                        <div className="min-w-0">
+                          <div className="mono text-ink font-medium">{currency(p.amount)}</div>
+                          <div className="text-[10.5px] text-inkfaint">Vencimento {fmtDate(p.dueDate)}</div>
+                          {hint && (
+                            <div className={`text-[10.5px] mt-0.5 ${p.status === "ATRASADO" ? "text-danger" : "text-warning"}`}>{hint}</div>
+                          )}
+                        </div>
+                        <span className={`text-[10.5px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap shrink-0 ${p.status === "PAGO" ? "bg-successsoft text-success" : p.status === "ATRASADO" ? "bg-dangersoft text-danger" : "bg-warningsoft text-warning"}`}>
+                          {PAYMENT_LABEL[p.status]}
+                        </span>
+                      </div>
+                    );
+                  })}
                   {client.payments.length === 0 && <div className="px-4 py-6 text-center text-inkfaint text-xs">Nenhum pagamento registrado.</div>}
                 </div>
               </div>

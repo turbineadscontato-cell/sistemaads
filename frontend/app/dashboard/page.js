@@ -137,6 +137,7 @@ export default function Dashboard() {
   // navegador a partir dos dados já carregados, sem chamada extra à API.
   const [clientSearch, setClientSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("TODOS");
+  const [weekdayFilter, setWeekdayFilter] = useState("TODOS");
   const [sortKey, setSortKey] = useState("name");
   const [sortDir, setSortDir] = useState("asc");
 
@@ -340,14 +341,22 @@ export default function Dashboard() {
     const q = clientSearch.trim().toLowerCase();
     const list = base
       .filter((c) => statusFilter === "TODOS" || c.status === statusFilter)
+      .filter((c) => weekdayFilter === "TODOS" || String(c.optimizationDay) === weekdayFilter)
       .filter((c) => !q || c.name.toLowerCase().includes(q) || (c.niche || "").toLowerCase().includes(q) || (c.gestor?.name || "").toLowerCase().includes(q));
     const dir = sortDir === "asc" ? 1 : -1;
     return list.sort((a, b) => {
+      if (sortKey === "optimizationDay") {
+        // Ordena começando na segunda (não no domingo, que é o que Date.getDay()
+        // usaria) — assim "ordenar por dia" mostra de fato "todos da segunda,
+        // depois todos da terça…" como foi pedido, em vez da ordem do calendário.
+        const rank = (d) => (d === null || d === undefined ? 99 : (Number(d) === 0 ? 6 : Number(d) - 1));
+        return (rank(a.optimizationDay) - rank(b.optimizationDay)) * dir;
+      }
       const va = (sortKey === "gestor" ? a.gestor?.name : a[sortKey]) || "";
       const vb = (sortKey === "gestor" ? b.gestor?.name : b[sortKey]) || "";
       return String(va).localeCompare(String(vb), "pt-BR") * dir;
     });
-  }, [clients, myClients, tab, clientSearch, statusFilter, sortKey, sortDir]);
+  }, [clients, myClients, tab, clientSearch, statusFilter, weekdayFilter, sortKey, sortDir]);
 
   function toggleSort(key) {
     if (sortKey === key) {
@@ -646,13 +655,19 @@ export default function Dashboard() {
                   className="px-2.5 py-1.5 text-[12.5px] rounded-lg border border-border bg-surface2 text-ink">
                   {STATUS_FILTERS.map((s) => <option key={s} value={s}>{s === "TODOS" ? "Todos os status" : STATUS_LABEL[s]}</option>)}
                 </select>
+                <select value={weekdayFilter} onChange={(e) => setWeekdayFilter(e.target.value)}
+                  title="Filtrar por dia de otimização"
+                  className="px-2.5 py-1.5 text-[12.5px] rounded-lg border border-border bg-surface2 text-ink">
+                  <option value="TODOS">Todos os dias de otimização</option>
+                  {WEEKDAY_OPTIONS.map((w) => <option key={w.value} value={String(w.value)}>{w.label}</option>)}
+                </select>
               </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm min-w-[720px]">
                 <thead>
                   <tr className="text-[10.5px] uppercase text-inkfaint text-left select-none">
-                    {[["name", "Cliente"], ["status", "Status"], ["plan", "Plano"], ["gestor", "Gestor"]].map(([key, label]) => (
+                    {[["name", "Cliente"], ["status", "Status"], ["plan", "Plano"], ["gestor", "Gestor"], ["optimizationDay", "Dia"]].map(([key, label]) => (
                       <th key={key} className="px-4.5 py-2.5 cursor-pointer hover:text-ink transition" onClick={() => toggleSort(key)}>
                         <span className="inline-flex items-center gap-1">{label}{sortKey === key && <span className="text-accent">{sortDir === "asc" ? "▲" : "▼"}</span>}</span>
                       </th>
@@ -682,11 +697,12 @@ export default function Dashboard() {
                           </span>
                         ) : "—"}
                       </td>
+                      <td className="px-4.5 py-3 mono text-inksoft whitespace-nowrap">{weekdayPhrase(c.optimizationDay)}</td>
                       <td className="px-4.5 py-3 text-inksoft whitespace-nowrap">{c.openPendencies ? `${c.openPendencies} aberta(s)` : "sem pendências"}</td>
                     </tr>
                   ))}
                   {!loading && filteredClients.length === 0 && (
-                    <tr><td colSpan={5} className="px-4.5 py-8 text-center text-inkfaint">
+                    <tr><td colSpan={6} className="px-4.5 py-8 text-center text-inkfaint">
                       {clients.length === 0 ? "Nenhum cliente cadastrado ainda." : "Nenhum cliente encontrado com esse filtro."}
                     </td></tr>
                   )}

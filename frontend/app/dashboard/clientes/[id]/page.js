@@ -38,6 +38,18 @@ function isOverdue(dueDate, status) {
   today.setUTCHours(0, 0, 0, 0);
   return d < today;
 }
+function fmtDateTime(d) {
+  if (!d) return "—";
+  return new Date(d).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+const MAX_METRIC_FILE_BYTES = 5_500_000; // ~5.5MB — margem confortável abaixo do limite do backend (~6MB decodificado)
+function emptyMetricForm() {
+  return {
+    periodLabel: "", spend: "", cpa: "", cpl: "", messagesStarted: "", costPerConversation: "", costPerLead: "", costPerPurchase: "",
+    leadsCount: "", closedCount: "", leadQualityNote: "", whatWorked: "", whatFailed: "",
+    fileName: "", fileMimeType: "", fileBase64: "",
+  };
+}
 function isOptimizationDue(nextOptimizationDate) {
   if (!nextOptimizationDate) return false;
   const d = new Date(nextOptimizationDate);
@@ -74,6 +86,15 @@ export default function ClientDetail() {
   const [loginForm, setLoginForm] = useState({ name: "", email: "", cpf: "", phone: "", password: "" });
   const [savingLogin, setSavingLogin] = useState(false);
 
+  // Métricas manuais do Meta Ads — enquanto a integração automática não está
+  // liberada, o gestor/sócio lança aqui (com anexo opcional do relatório
+  // exportado), formando um histórico que a IA interna também consulta.
+  const [metrics, setMetrics] = useState([]);
+  const [showMetricForm, setShowMetricForm] = useState(false);
+  const [newMetric, setNewMetric] = useState(emptyMetricForm());
+  const [savingMetric, setSavingMetric] = useState(false);
+  const [metricFileError, setMetricFileError] = useState("");
+
   useEffect(() => {
     const u = getUser();
     if (!u) { router.replace("/"); return; }
@@ -96,6 +117,18 @@ export default function ClientDetail() {
   useEffect(() => {
     if (user) load();
   }, [user, load]);
+
+  const loadMetrics = useCallback(async () => {
+    try {
+      setMetrics(await api(`/api/clients/${id}/metrics`));
+    } catch {
+      // sem acesso (cliente logado, por exemplo) — silencioso, a seção nem aparece
+    }
+  }, [id]);
+
+  useEffect(() => {
+    if (user && (user.role === "SOCIO" || user.role === "GESTOR")) loadMetrics();
+  }, [user, loadMetrics]);
 
   async function saveNotes() {
     setSavingNotes(true);
@@ -283,6 +316,68 @@ export default function ClientDetail() {
       alert(err.message);
     } finally {
       setSavingLogin(false);
+    }
+  }
+
+  function onMetricFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > MAX_METRIC_FILE_BYTES) {
+      setMetricFileError("Arquivo muito grande — use um arquivo de até ~5MB.");
+      return;
+    }
+    setMetricFileError("");
+    const reader = new FileReader();
+    reader.onload = () => {
+      setNewMetric((f) => ({ ...f, fileName: file.name, fileMimeType: file.type || "application/octet-stream", fileBase64: reader.result }));
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function addMetric(e) {
+    e.preventDefault();
+    setSavingMetric(true);
+    try {
+      const numOrUndefined = (v) => (v === "" ? undefined : v);
+      await api(`/api/clients/${id}/metrics`, {
+        method: "POST",
+        body: {
+          periodLabel: newMetric.periodLabel || undefined,
+          spend: numOrUndefined(newMetric.spend),
+          cpa: numOrUndefined(newMetric.cpa),
+          cpl: numOrUndefined(newMetric.cpl),
+          messagesStarted: numOrUndefined(newMetric.messagesStarted),
+          costPerConversation: numOrUndefined(newMetric.costPerConversation),
+          costPerLead: numOrUndefined(newMetric.costPerLead),
+          costPerPurchase: numOrUndefined(newMetric.costPerPurchase),
+          leadsCount: numOrUndefined(newMetric.leadsCount),
+          closedCount: numOrUndefined(newMetric.closedCount),
+          leadQualityNote: newMetric.leadQualityNote || undefined,
+          whatWorked: newMetric.whatWorked || undefined,
+          whatFailed: newMetric.whatFailed || undefined,
+          fileName: newMetric.fileName || undefined,
+          fileMimeType: newMetric.fileMimeType || undefined,
+          fileBase64: newMetric.fileBase64 || undefined,
+        },
+      });
+      setNewMetric(emptyMetricForm());
+      setMetricFileError("");
+      setShowMetricForm(false);
+      loadMetrics();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSavingMetric(false);
+    }
+  }
+
+  async function deleteMetric(entryId) {
+    if (!confirm("Excluir esse lançamento de métricas? Não pode ser desfeito.")) return;
+    try {
+      await api(`/api/clients/${id}/metrics/${entryId}`, { method: "DELETE" });
+      loadMetrics();
+    } catch (err) {
+      alert(err.message);
     }
   }
 
@@ -546,6 +641,104 @@ export default function ClientDetail() {
                 {markingOptimized ? "Salvando…" : "✓ Marcar otimização como feita"}
               </button>
             )}
+          </div>
+        )}
+
+        {canOperate && (
+          <div className="bg-surface border border-border rounded-xl shadow-sm overflow-hidden mb-4">
+            <div className="px-4 py-2.5 border-b border-border flex items-center justify-between gap-2 flex-wrap">
+              <div>
+                <span className="font-display font-semibold text-sm text-ink">Métricas de Meta Ads (lançamento manual)</span>
+                <p className="text-[10.5px] text-inkfaint mt-0.5">Enquanto a integração automática com o Meta não está liberada — lance aqui o que sair do relatório, período a período. Isso também alimenta a IA interna quando você pede pra ela analisar esse cliente.</p>
+              </div>
+              <button onClick={() => setShowMetricForm((v) => !v)} className="text-[11.5px] text-accent hover:underline shrink-0">
+                {showMetricForm ? "Cancelar" : "+ Novo lançamento"}
+              </button>
+            </div>
+
+            {showMetricForm && (
+              <form onSubmit={addMetric} className="p-3.5 border-b border-border space-y-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <input placeholder="Período (ex: 01–07/09)" value={newMetric.periodLabel} onChange={(e) => setNewMetric({ ...newMetric, periodLabel: e.target.value })}
+                    className="col-span-2 px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink" />
+                  <input type="number" step="0.01" placeholder="Investimento (R$)" value={newMetric.spend} onChange={(e) => setNewMetric({ ...newMetric, spend: e.target.value })}
+                    className="px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink mono" />
+                  <input type="number" step="0.01" placeholder="CPA" value={newMetric.cpa} onChange={(e) => setNewMetric({ ...newMetric, cpa: e.target.value })}
+                    className="px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink mono" />
+                  <input type="number" step="0.01" placeholder="CPL" value={newMetric.cpl} onChange={(e) => setNewMetric({ ...newMetric, cpl: e.target.value })}
+                    className="px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink mono" />
+                  <input type="number" placeholder="Mensagens iniciadas" value={newMetric.messagesStarted} onChange={(e) => setNewMetric({ ...newMetric, messagesStarted: e.target.value })}
+                    className="px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink mono" />
+                  <input type="number" step="0.01" placeholder="Custo/conversa" value={newMetric.costPerConversation} onChange={(e) => setNewMetric({ ...newMetric, costPerConversation: e.target.value })}
+                    className="px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink mono" />
+                  <input type="number" step="0.01" placeholder="Custo/lead" value={newMetric.costPerLead} onChange={(e) => setNewMetric({ ...newMetric, costPerLead: e.target.value })}
+                    className="px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink mono" />
+                  <input type="number" step="0.01" placeholder="Custo/compra" value={newMetric.costPerPurchase} onChange={(e) => setNewMetric({ ...newMetric, costPerPurchase: e.target.value })}
+                    className="px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink mono" />
+                  <input type="number" placeholder="Leads" value={newMetric.leadsCount} onChange={(e) => setNewMetric({ ...newMetric, leadsCount: e.target.value })}
+                    className="px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink mono" />
+                  <input type="number" placeholder="Fechados/vendas" value={newMetric.closedCount} onChange={(e) => setNewMetric({ ...newMetric, closedCount: e.target.value })}
+                    className="px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink mono" />
+                </div>
+                <textarea placeholder="O que o cliente está falando? (qualidade dos leads, quantos fechou etc.)" value={newMetric.leadQualityNote}
+                  onChange={(e) => setNewMetric({ ...newMetric, leadQualityNote: e.target.value })} rows={2}
+                  className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink resize-none" />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <textarea placeholder="O que funcionou" value={newMetric.whatWorked} onChange={(e) => setNewMetric({ ...newMetric, whatWorked: e.target.value })} rows={2}
+                    className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink resize-none" />
+                  <textarea placeholder="O que não funcionou" value={newMetric.whatFailed} onChange={(e) => setNewMetric({ ...newMetric, whatFailed: e.target.value })} rows={2}
+                    className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink resize-none" />
+                </div>
+                <div>
+                  <label className="text-[11.5px] font-medium text-accent hover:underline cursor-pointer w-fit inline-block">
+                    {newMetric.fileName ? `Anexado: ${newMetric.fileName} (trocar)` : "Anexar relatório exportado do Meta (opcional)"}
+                    <input type="file" onChange={onMetricFile} className="hidden" />
+                  </label>
+                  {metricFileError && <div className="text-[11px] text-danger mt-1">{metricFileError}</div>}
+                </div>
+                <button disabled={savingMetric} className="bg-accent text-white text-xs font-medium px-3 py-1.5 rounded-md hover:bg-accentink disabled:opacity-60">
+                  {savingMetric ? "Salvando…" : "Salvar lançamento"}
+                </button>
+              </form>
+            )}
+
+            <div className="divide-y divide-border max-h-96 overflow-y-auto">
+              {metrics.map((m) => (
+                <div key={m.id} className="px-4 py-3 text-sm space-y-1.5">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-ink">{m.periodLabel || fmtDateTime(m.createdAt)}</span>
+                      <span className="text-[10.5px] text-inkfaint">lançado por {m.createdBy?.name || "—"} em {fmtDateTime(m.createdAt)}</span>
+                    </div>
+                    {canEdit && (
+                      <button onClick={() => deleteMetric(m.id)} className="text-[11px] text-inkfaint hover:text-danger shrink-0">excluir</button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-inksoft mono">
+                    {m.spend != null && <span>Investimento: {currency(m.spend)}</span>}
+                    {m.cpa != null && <span>CPA: {currency(m.cpa)}</span>}
+                    {m.cpl != null && <span>CPL: {currency(m.cpl)}</span>}
+                    {m.messagesStarted != null && <span>Msgs iniciadas: {m.messagesStarted}</span>}
+                    {m.costPerConversation != null && <span>Custo/conversa: {currency(m.costPerConversation)}</span>}
+                    {m.costPerLead != null && <span>Custo/lead: {currency(m.costPerLead)}</span>}
+                    {m.costPerPurchase != null && <span>Custo/compra: {currency(m.costPerPurchase)}</span>}
+                    {m.leadsCount != null && <span>Leads: {m.leadsCount}</span>}
+                    {m.closedCount != null && <span>Fechados: {m.closedCount}</span>}
+                  </div>
+                  {m.leadQualityNote && <div className="text-[12.5px] text-ink"><span className="text-inkfaint">Cliente disse: </span>{m.leadQualityNote}</div>}
+                  {m.whatWorked && <div className="text-[12.5px] text-success"><span className="text-inkfaint">Funcionou: </span>{m.whatWorked}</div>}
+                  {m.whatFailed && <div className="text-[12.5px] text-danger"><span className="text-inkfaint">Não funcionou: </span>{m.whatFailed}</div>}
+                  {m.fileBase64 && (
+                    <a href={m.fileBase64} download={m.fileName || "relatorio-meta"} className="text-[11.5px] text-accent hover:underline inline-block">
+                      📎 {m.fileName || "arquivo anexado"}
+                    </a>
+                  )}
+                </div>
+              ))}
+              {metrics.length === 0 && !showMetricForm && (
+                <div className="px-4 py-6 text-center text-inkfaint text-xs">Nenhuma métrica lançada ainda — comece com "+ Novo lançamento".</div>
+              )}
+            </div>
           </div>
         )}
 

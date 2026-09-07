@@ -13,6 +13,15 @@ function sanitizeServices(services) {
   return services.filter((s) => VALID_SERVICE_KEYS.includes(s));
 }
 
+// Portal color scheme the professional picks for their patients' own portal
+// (kept separate from the internal TurbinaADS dashboard, which stays as-is).
+const VALID_THEME_COLORS = new Set(["branco", "azul", "rosa", "bege", "preto"]);
+function sanitizeThemeColor(value) {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return null;
+  return VALID_THEME_COLORS.has(value) ? value : undefined;
+}
+
 // Checklist padrão de onboarding — criado automaticamente pra todo cliente
 // novo no plano COMPLETO (tráfego pago), com prazo em dias úteis contados a
 // partir da data de contratação (criação do cliente no sistema).
@@ -223,9 +232,17 @@ router.post("/:id/portal-login", requireRole("SOCIO", "GESTOR"), async (req, res
 // Never touches planType, which stays a commercial decision made by a sócio.
 router.patch("/me/branding", requireRole("CLIENTE"), async (req, res) => {
   if (!req.user.clientId) return res.status(400).json({ error: "Login não vinculado a um cliente." });
-  const { brandName, logoBase64, logoMimeType } = req.body || {};
+  const { brandName, logoBase64, logoMimeType, brandBgColor, brandAccentColor } = req.body || {};
   if (logoBase64 && logoBase64.length > 3_000_000) {
     return res.status(400).json({ error: "Imagem muito grande — use um arquivo menor (até ~2MB)." });
+  }
+  const cleanBg = sanitizeThemeColor(brandBgColor);
+  const cleanAccent = sanitizeThemeColor(brandAccentColor);
+  if (brandBgColor !== undefined && cleanBg === undefined) {
+    return res.status(400).json({ error: "Cor principal inválida." });
+  }
+  if (brandAccentColor !== undefined && cleanAccent === undefined) {
+    return res.status(400).json({ error: "Cor de detalhe inválida." });
   }
   const client = await prisma.client.update({
     where: { id: req.user.clientId },
@@ -233,10 +250,77 @@ router.patch("/me/branding", requireRole("CLIENTE"), async (req, res) => {
       ...(brandName !== undefined && { brandName: brandName || null }),
       ...(logoBase64 !== undefined && { logoBase64: logoBase64 || null }),
       ...(logoMimeType !== undefined && { logoMimeType: logoMimeType || null }),
+      ...(cleanBg !== undefined && { brandBgColor: cleanBg }),
+      ...(cleanAccent !== undefined && { brandAccentColor: cleanAccent }),
     },
-    select: { id: true, brandName: true, logoBase64: true, logoMimeType: true },
+    select: { id: true, brandName: true, logoBase64: true, logoMimeType: true, brandBgColor: true, brandAccentColor: true },
   });
   res.json(client);
+});
+
+// --- Manual Meta Ads metrics & optimization history, per client ---
+// Enquanto a integração automática com a API do Meta não está liberada, o
+// gestor/sócio lança essas métricas manualmente aqui (com anexo opcional do
+// relatório exportado do Gerenciador de Anúncios). Cada lançamento vira uma
+// linha no histórico do cliente — o que deu certo, o que não deu, o que o
+// cliente falou — pra time (e a IA interna) conseguirem acompanhar evolução.
+const MAX_METRIC_FILE_B64_CHARS = 8_000_000; // ~6MB decoded
+
+router.get("/:id/metrics", requireRole("SOCIO", "GESTOR"), async (req, res) => {
+  const client = await prisma.client.findFirst({ where: { id: req.params.id, ...scopeFilter(req.user) } });
+  if (!client) return res.status(404).json({ error: "Cliente não encontrado." });
+  const entries = await prisma.clientMetricEntry.findMany({
+    where: { clientId: req.params.id },
+    orderBy: { createdAt: "desc" },
+    include: { createdBy: { select: { name: true } } },
+  });
+  res.json(entries);
+});
+
+router.post("/:id/metrics", requireRole("SOCIO", "GESTOR"), async (req, res) => {
+  const client = await prisma.client.findFirst({ where: { id: req.params.id, ...scopeFilter(req.user) } });
+  if (!client) return res.status(404).json({ error: "Cliente não encontrado." });
+  const {
+    periodLabel, spend, cpa, cpl, messagesStarted, costPerConversation, costPerLead, costPerPurchase,
+    leadsCount, closedCount, leadQualityNote, whatWorked, whatFailed,
+    fileName, fileMimeType, fileBase64,
+  } = req.body || {};
+
+  if (fileBase64 && fileBase64.length > MAX_METRIC_FILE_B64_CHARS) {
+    return res.status(413).json({ error: "Arquivo grande demais — use um arquivo menor (até ~6MB)." });
+  }
+
+  const num = (v) => (v !== undefined && v !== null && v !== "" ? Number(v) : null);
+  const entry = await prisma.clientMetricEntry.create({
+    data: {
+      clientId: req.params.id,
+      periodLabel: periodLabel || null,
+      spend: num(spend),
+      cpa: num(cpa),
+      cpl: num(cpl),
+      messagesStarted: num(messagesStarted),
+      costPerConversation: num(costPerConversation),
+      costPerLead: num(costPerLead),
+      costPerPurchase: num(costPerPurchase),
+      leadsCount: num(leadsCount),
+      closedCount: num(closedCount),
+      leadQualityNote: leadQualityNote || null,
+      whatWorked: whatWorked || null,
+      whatFailed: whatFailed || null,
+      fileName: fileBase64 ? (fileName || null) : null,
+      fileMimeType: fileBase64 ? (fileMimeType || null) : null,
+      fileBase64: fileBase64 || null,
+      createdById: req.user.id,
+    },
+  });
+  res.status(201).json(entry);
+});
+
+router.delete("/:id/metrics/:entryId", requireRole("SOCIO", "GESTOR"), async (req, res) => {
+  const client = await prisma.client.findFirst({ where: { id: req.params.id, ...scopeFilter(req.user) } });
+  if (!client) return res.status(404).json({ error: "Cliente não encontrado." });
+  await prisma.clientMetricEntry.deleteMany({ where: { id: req.params.entryId, clientId: req.params.id } });
+  res.status(204).end();
 });
 
 // Shared by both branches of PATCH /:id below: builds the
