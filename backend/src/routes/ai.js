@@ -120,7 +120,7 @@ const STAFF_TOOLS = [
   {
     name: "detalhes_cliente",
     description:
-      "Busca os dados reais de UM cliente específico da agência pelo nome: status, plano, valor mensal, verba diária, criativo ativo, dia de otimização, últimos pagamentos, tarefas em aberto, contas de anúncio vinculadas e o histórico recente de métricas do Meta Ads lançado manualmente (CPA, CPL, mensagens iniciadas, custo por lead/conversa/compra, o que o cliente disse sobre a qualidade dos leads, o que funcionou e o que não funcionou em cada otimização). Use sempre que o usuário mencionar um cliente pelo nome e a resposta depender de números/dados reais, inclusive pra sugerir o que ajustar numa campanha — nunca invente esses dados.",
+      "Busca os dados reais de UM cliente específico da agência pelo nome: status, plano, valor mensal, verba diária, criativo ativo, dia de otimização, últimos pagamentos, tarefas em aberto, contas de anúncio vinculadas e TODO o histórico de métricas do Meta Ads lançado manualmente (CPA, CPL, mensagens iniciadas, custo por lead/conversa/compra, o que o cliente disse sobre a qualidade dos leads, o que funcionou e o que não funcionou em cada otimização — até 60 lançamentos mais recentes). Use sempre que o usuário mencionar um cliente pelo nome e a resposta depender de números/dados reais — inclusive pra analisar a evolução do histórico e sugerir o que ajustar numa campanha pra melhorar o desempenho. Nunca invente esses dados.",
     input_schema: {
       type: "object",
       properties: { nome: { type: "string", description: "Nome (ou parte do nome) do cliente a buscar." } },
@@ -165,9 +165,10 @@ async function toolDetalhesCliente(req, input) {
       tasks: { where: { status: { not: "CONCLUIDA" } }, orderBy: { dueDate: "asc" }, take: 8 },
       adAccounts: true,
       gestor: { select: { name: true } },
-      // Só os últimos 6 lançamentos manuais de métricas — o bastante pra IA
-      // enxergar tendência recente sem estourar o tamanho da resposta.
-      metricEntries: { orderBy: { createdAt: "desc" }, take: 6 },
+      // Histórico completo (até 60 lançamentos, o suficiente pra cobrir mais
+      // de um ano de otimizações semanais) — pedido explícito do usuário pra
+      // IA analisar a evolução toda do cliente, não só os últimos meses.
+      metricEntries: { orderBy: { createdAt: "desc" }, take: 60 },
     },
   });
   if (!client) return { erro: `Nenhum cliente chamado "${nome}" encontrado (ou sem acesso a ele).` };

@@ -17,7 +17,8 @@ import RankBadge from "../../components/RankBadge";
 import AnimatedNumber from "../../components/AnimatedNumber";
 import MeuSaldo from "../../components/MeuSaldo";
 import FinanceiroPanel from "../../components/FinanceiroPanel";
-import { NAV_ICON, IconSearch, IconAlert, IconMoney, IconTrophy, IconUsers, IconTasks, IconClock, IconChevronRight, IconX, IconStar } from "../../components/icons";
+import AdministracaoPanel from "../../components/administracao/AdministracaoPanel";
+import { NAV_ICON, IconSearch, IconAlert, IconMoney, IconTrophy, IconUsers, IconTasks, IconClock, IconChevronRight, IconX, IconStar, IconBriefcase } from "../../components/icons";
 import { WEEKDAY_OPTIONS, weekdayPhrase } from "../../lib/weekday";
 import { SERVICE_OPTIONS } from "../../lib/services";
 
@@ -290,6 +291,11 @@ export default function Dashboard() {
   // mesmo, pra gerenciar sem misturar com a carteira inteira da agência.
   const canSeeMeusClientes = user ? user.role === "SOCIO" : false;
   const canSeeFinanceiro = user ? user.role === "SOCIO" : false;
+  // Módulo Administração (financeiro/administrativo interno da agência) —
+  // os dois sócios usam o mesmo role SOCIO, então ambos já enxergam tudo
+  // aqui (seção 2 do pedido: "os dois sócios devem conseguir visualizar
+  // toda a área administrativa").
+  const canSeeAdministracao = user ? user.role === "SOCIO" : false;
   const canCreateClient = user ? (user.role === "SOCIO" || user.role === "GESTOR") : false;
 
   const ativos = clients.filter((c) => c.status === "ATIVO").length;
@@ -378,6 +384,7 @@ export default function Dashboard() {
     canSeeRelatorios && { key: "relatorios", label: "Relatórios", icon: NAV_ICON.relatorios },
     canSeeAssistentes && { key: "assistentes", label: "Assistentes IA", icon: NAV_ICON.assistentes },
     canSeeFinanceiro && { key: "financeiro", label: "Financeiro", icon: IconMoney },
+    canSeeAdministracao && { key: "administracao", label: "Administração", icon: IconBriefcase },
     canSeeUsuarios && { key: "usuarios", label: "Usuários", icon: NAV_ICON.usuarios },
   ].filter(Boolean);
 
@@ -842,6 +849,7 @@ export default function Dashboard() {
       {tab === "relatorios" && canSeeRelatorios && <Reports />}
       {tab === "assistentes" && canSeeAssistentes && <AIAssistants />}
       {tab === "financeiro" && canSeeFinanceiro && <FinanceiroPanel />}
+      {tab === "administracao" && canSeeAdministracao && <AdministracaoPanel />}
       {tab === "usuarios" && canSeeUsuarios && <UsersPanel />}
 
       {/* Painel rápido "quem é esse cliente" — aberto ao clicar no nome do

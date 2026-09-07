@@ -20,6 +20,7 @@ const contentPostRoutes = require("./routes/contentPosts");
 const metaRoutes = require("./routes/meta");
 const patientPortalRoutes = require("./routes/patientPortal");
 const financeRoutes = require("./routes/finance");
+const adminRoutes = require("./routes/admin");
 
 const app = express();
 
@@ -60,6 +61,7 @@ app.use("/api/content-posts", contentPostRoutes);
 app.use("/api/meta", metaRoutes);
 app.use("/api/patient-portal", patientPortalRoutes);
 app.use("/api/finance", financeRoutes);
+app.use("/api/admin", adminRoutes);
 
 app.use((req, res) => res.status(404).json({ error: "Rota não encontrada." }));
 

@@ -48,6 +48,20 @@ enum PendencyStatus {
   RESOLVIDA
 }
 
+// Status de um lançamento financeiro administrativo (Receita ou Despesa).
+// Separado de PaymentStatus (que já existia pra Payment/fatura do cliente)
+// porque a Administração precisa também de PREVISTO (lançamento futuro
+// ainda nem pendente) e CANCELADO (usado como "exclusão" — ver nota em
+// AdminRevenue/AdminExpense: registro financeiro nunca é apagado de
+// verdade, só marcado CANCELADO).
+enum AdminEntryStatus {
+  PREVISTO
+  PENDENTE
+  PAGO
+  ATRASADO
+  CANCELADO
+}
+
 model User {
   id           String   @id @default(cuid())
   name         String
@@ -84,6 +98,13 @@ model User {
   aiMessages     AiMessage[]
   aiReferenceImages AiReferenceImage[]
   clientMetricEntries ClientMetricEntry[]
+
+  // Módulo Administração (financeiro interno da própria agência) — só
+  // sócios usam, mas o registro de quem lançou cada coisa fica de qualquer
+  // forma pra auditoria futura (seção 37 do pedido).
+  adminRevenuesCreated       AdminRevenue[]        @relation("AdminRevenueCreatedBy")
+  adminExpensesCreated       AdminExpense[]        @relation("AdminExpenseCreatedBy")
+  adminCollectionNotesCreated AdminCollectionNote[] @relation("AdminCollectionNoteCreatedBy")
 
   // Set only for role = CLIENTE: which client's portal this login can see.
   clientId String?
@@ -167,6 +188,7 @@ model Client {
   adAccounts   AdAccount[]
   commissions  Commission[]
   metricEntries ClientMetricEntry[]
+  adminRevenues AdminRevenue[]
 }
 
 // Registro manual de métricas de campanha (enquanto o app do Meta for
@@ -550,4 +572,94 @@ model AiReferenceImage {
   createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
 
   @@index([createdAt])
+}
+
+// ==========================================================================
+// Módulo ADMINISTRAÇÃO — central financeira/administrativa da própria
+// TurbinaADS (não confundir com o Payment/fatura que já existia pra mostrar
+// ao CLIENTE quanto ele deve à agência — aquele fluxo foi mantido intacto e
+// continua alimentando o portal do cliente; este aqui é o livro-caixa
+// interno dos sócios, deliberadamente separado pra não arriscar quebrar o
+// que já funcionava). Fase 1 (07/09/2026): Receitas, Despesas, Clientes
+// financeiros, Cobranças, Fluxo de caixa e Dashboard administrativo — só
+// role SOCIO acessa (os dois sócios existentes já usam esse role).
+// ==========================================================================
+
+// Lançamento de receita (entrada) da agência. Pode ou não estar vinculado a
+// um cliente já cadastrado (clientId opcional) — permite tanto "mensalidade
+// do cliente X" quanto uma receita avulsa sem cliente.
+model AdminRevenue {
+  id            String            @id @default(cuid())
+  description   String
+  category      String?
+  amount        Float
+  dueDate       DateTime?
+  paidDate      DateTime?
+  paymentMethod String?
+  account       String?
+  status        AdminEntryStatus  @default(PENDENTE)
+  // Receita recorrente (ex: mensalidade todo dia 10) — recurrenceDay guarda
+  // o dia do mês em que o próximo lançamento deve ser gerado.
+  recurring     Boolean           @default(false)
+  recurrenceDay Int?
+  notes         String?           @db.Text
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  createdById String?
+  createdBy   User?   @relation("AdminRevenueCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  collectionNotes AdminCollectionNote[]
+
+  @@index([status, dueDate])
+  @@index([clientId])
+}
+
+// Lançamento de despesa (saída) da agência.
+model AdminExpense {
+  id              String           @id @default(cuid())
+  description     String
+  supplier        String?
+  category        String?
+  amount          Float
+  date            DateTime?
+  dueDate         DateTime?
+  paidDate        DateTime?
+  paymentMethod   String?
+  account         String?
+  costCenter      String?
+  responsible     String?
+  // Comprovante anexado — mesmo padrão base64 já usado em ClientMetricEntry.
+  receiptName     String?
+  receiptMimeType String?
+  receiptBase64   String?          @db.Text
+  notes           String?          @db.Text
+  recurring       Boolean          @default(false)
+  recurrenceDay   Int?
+  status          AdminEntryStatus @default(PENDENTE)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  createdById String?
+  createdBy   User?   @relation("AdminExpenseCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([status, dueDate])
+}
+
+// Histórico de contato de cobrança sobre uma receita específica (seção 8 do
+// pedido) — "05/09 WhatsApp enviado", "07/09 cliente disse que paga dia 10".
+model AdminCollectionNote {
+  id        String   @id @default(cuid())
+  type      String   @default("OUTRO") // WHATSAPP | EMAIL | LIGACAO | OUTRO
+  note      String   @db.Text
+  createdAt DateTime @default(now())
+
+  revenueId String
+  revenue   AdminRevenue @relation(fields: [revenueId], references: [id], onDelete: Cascade)
+
+  createdById String?
+  createdBy   User?   @relation("AdminCollectionNoteCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 }

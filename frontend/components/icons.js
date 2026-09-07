@@ -157,6 +157,17 @@ export function IconStar(props) {
   );
 }
 
+export function IconBriefcase(props) {
+  return (
+    <svg viewBox="0 0 24 24" {...base} {...props}>
+      <rect x="2.5" y="7.5" width="19" height="12.5" rx="2.2" />
+      <path d="M8.3 7.5V5.8a1.8 1.8 0 0 1 1.8-1.8h3.8a1.8 1.8 0 0 1 1.8 1.8v1.7" />
+      <path d="M2.5 12.7h19" />
+      <path d="M10.7 12.7v1.5h2.6v-1.5" />
+    </svg>
+  );
+}
+
 export function IconLogout(props) {
   return (
     <svg viewBox="0 0 24 24" {...base} {...props}>
