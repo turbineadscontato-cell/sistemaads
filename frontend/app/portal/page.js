@@ -14,6 +14,8 @@ import PatientLogins from "../../components/PatientLogins";
 import ContentCalendar from "../../components/ContentCalendar";
 import ClientMarketingAI from "../../components/ClientMarketingAI";
 import BrandingSettings from "../../components/BrandingSettings";
+import AvatarButton from "../../components/AvatarButton";
+import { hasPortalFeature } from "../../lib/portalFeatures";
 import { weekdayPhrase } from "../../lib/weekday";
 
 const STATUS_LABEL = { ATIVO: "Ativo", PENDENTE_PAGAMENTO: "Pendente de pagamento", ONBOARDING: "Em onboarding", CANCELADO: "Cancelado" };
@@ -43,7 +45,9 @@ function fmtDate(d) {
 }
 function fmtDateTime(d) {
   if (!d) return "—";
-  return new Date(d).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  // timeZone fixo (Brasília) — corrige horário de reunião aparecendo
+  // errado pra quem tem o fuso do navegador diferente (08/09/2026).
+  return new Date(d).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" });
 }
 function currency(n) {
   if (n == null) return "—";
@@ -112,7 +116,9 @@ export default function ClientPortal() {
     try {
       await api("/api/meetings", {
         method: "POST",
-        body: { scheduledAt: `${meetingForm.date}T${meetingForm.time}:00`, notes: meetingForm.notes },
+        // "-03:00" fixo (Brasília) pelo mesmo motivo do calendário interno —
+        // sem isso o horário digitado pelo cliente ia 3h errado (08/09/2026).
+        body: { scheduledAt: `${meetingForm.date}T${meetingForm.time}:00-03:00`, notes: meetingForm.notes },
       });
       setMeetingForm({ date: "", time: "", notes: "" });
       load();
@@ -140,7 +146,7 @@ export default function ClientPortal() {
     .sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt));
 
   const isSoSistema = client.planType === "SO_SISTEMA";
-  const visibleTabs = TABS.filter((t) => !t.traffic || !isSoSistema);
+  const visibleTabs = TABS.filter((t) => (t.key === "geral" || hasPortalFeature(client, t.key)) && (!t.traffic || !isSoSistema));
 
   return (
     <PortalShell
@@ -155,14 +161,17 @@ export default function ClientPortal() {
     >
         {tab === "geral" && (
           <>
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-inkfaint">Portal do cliente</div>
-              <h1 className="font-display font-bold text-2xl text-ink">{client.name}</h1>
-              <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                <span className={`pill pill-${client.status}`}>{STATUS_LABEL[client.status]}</span>
-                {isSoSistema && (
-                  <span className="text-[10.5px] px-2 py-0.5 rounded-full font-medium bg-surface2 text-inksoft border border-border">Plano: só sistema</span>
-                )}
+            <div className="flex items-center gap-3">
+              <AvatarButton src={client.photoUrl} name={client.name} size={56} readOnly />
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-inkfaint">Portal do cliente</div>
+                <h1 className="font-display font-bold text-2xl text-ink">{client.name}</h1>
+                <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                  <span className={`pill pill-${client.status}`}>{STATUS_LABEL[client.status]}</span>
+                  {isSoSistema && (
+                    <span className="text-[10.5px] px-2 py-0.5 rounded-full font-medium bg-surface2 text-inksoft border border-border">Plano: só sistema</span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -278,15 +287,15 @@ export default function ClientPortal() {
           </>
         )}
 
-        {tab === "ia" && <ClientMarketingAI />}
-        {tab === "pacientes" && <PatientsBoard />}
-        {tab === "financeiro" && <PatientsFinance />}
-        {tab === "acessos" && <PatientLogins />}
-        {tab === "conteudo" && <ContentCalendar clientId={client.id} />}
-        {tab === "leads" && <ClientLeadsBoard clientId={client.id} canEdit />}
-        {tab === "arquivos" && <ClientFiles clientId={client.id} canManage={false} allowClientUpload showScriptGenerator={false} />}
-        {tab === "relatorios" && !isSoSistema && <ClientReports clientId={client.id} canManage={false} />}
-        {tab === "marca" && <BrandingSettings client={client} onChange={load} />}
+        {tab === "ia" && hasPortalFeature(client, "ia") && <ClientMarketingAI />}
+        {tab === "pacientes" && hasPortalFeature(client, "pacientes") && <PatientsBoard />}
+        {tab === "financeiro" && hasPortalFeature(client, "financeiro") && <PatientsFinance />}
+        {tab === "acessos" && hasPortalFeature(client, "acessos") && <PatientLogins />}
+        {tab === "conteudo" && hasPortalFeature(client, "conteudo") && <ContentCalendar clientId={client.id} />}
+        {tab === "leads" && hasPortalFeature(client, "leads") && <ClientLeadsBoard clientId={client.id} canEdit />}
+        {tab === "arquivos" && hasPortalFeature(client, "arquivos") && <ClientFiles clientId={client.id} canManage={false} allowClientUpload showScriptGenerator={false} />}
+        {tab === "relatorios" && !isSoSistema && hasPortalFeature(client, "relatorios") && <ClientReports clientId={client.id} canManage={false} />}
+        {tab === "marca" && hasPortalFeature(client, "marca") && <BrandingSettings client={client} onChange={load} />}
     </PortalShell>
   );
 }

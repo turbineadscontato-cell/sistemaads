@@ -11,8 +11,10 @@ import ClientLeadsBoard from "../../../../components/ClientLeadsBoard";
 import ContentCalendar from "../../../../components/ContentCalendar";
 import Celebration from "../../../../components/Celebration";
 import AnimatedNumber from "../../../../components/AnimatedNumber";
+import AvatarButton from "../../../../components/AvatarButton";
 import { WEEKDAY_OPTIONS, weekdayPhrase } from "../../../../lib/weekday";
 import { SERVICE_OPTIONS, SERVICE_LABEL, COMMISSION_PER_SERVICE } from "../../../../lib/services";
+import { PORTAL_FEATURE_OPTIONS, ALL_PORTAL_FEATURE_KEYS } from "../../../../lib/portalFeatures";
 
 const STATUS_LABEL = { ATIVO: "Ativo", PENDENTE_PAGAMENTO: "Pendente", ONBOARDING: "Onboarding", CANCELADO: "Cancelado" };
 const PAYMENT_LABEL = { PAGO: "Pago", PENDENTE: "Pendente", ATRASADO: "Atrasado" };
@@ -156,6 +158,10 @@ export default function ClientDetail() {
       planType: client.planType || "COMPLETO",
       services: client.services || [],
       otherServiceNote: client.otherServiceNote || "",
+      // Vazio = libera todas as abas do portal (comportamento de hoje). Ao
+      // abrir o formulário já mostramos tudo marcado nesse caso, então
+      // desmarcar aqui é sempre uma restrição deliberada do sócio.
+      portalFeatures: client.portalFeatures && client.portalFeatures.length ? client.portalFeatures : ALL_PORTAL_FEATURE_KEYS,
     });
     setEditing(true);
   }
@@ -164,6 +170,13 @@ export default function ClientDetail() {
     setEditForm((f) => {
       const has = f.services.includes(key);
       return { ...f, services: has ? f.services.filter((s) => s !== key) : [...f.services, key] };
+    });
+  }
+
+  function togglePortalFeature(key) {
+    setEditForm((f) => {
+      const has = f.portalFeatures.includes(key);
+      return { ...f, portalFeatures: has ? f.portalFeatures.filter((k) => k !== key) : [...f.portalFeatures, key] };
     });
   }
 
@@ -184,6 +197,7 @@ export default function ClientDetail() {
         : {
             optimizationDay: editForm.optimizationDay !== "" ? Number(editForm.optimizationDay) : null,
             activeCreative: editForm.activeCreative,
+            dailyAdBudget: editForm.dailyAdBudget !== "" ? Number(editForm.dailyAdBudget) : null,
           };
       await api(`/api/clients/${id}`, { method: "PATCH", body });
       setEditing(false);
@@ -405,14 +419,25 @@ export default function ClientDetail() {
         <Link href="/dashboard" className="text-xs text-inkfaint hover:text-accent">← Voltar aos clientes</Link>
 
         <div className="flex flex-wrap items-start justify-between gap-3 mt-3 mb-6">
-          <div>
-            <h1 className="font-display font-bold text-2xl text-ink">{client.name}</h1>
-            <div className="flex flex-wrap items-center gap-2 mt-1.5">
-              <span className={`pill pill-${client.status}`}>{STATUS_LABEL[client.status]}</span>
-              <span className="text-xs text-inkfaint">{client.niche || "nicho não informado"}</span>
-              {isSoSistema && (
-                <span className="text-[10.5px] px-2 py-0.5 rounded-full font-medium bg-surface2 text-inksoft border border-border">Só sistema</span>
-              )}
+          <div className="flex items-center gap-3">
+            <AvatarButton
+              src={client.photoUrl}
+              name={client.name}
+              size={56}
+              readOnly={!canEdit}
+              endpoint={`/api/clients/${client.id}`}
+              field="photoUrl"
+              onSaved={(photoUrl) => setClient((c) => ({ ...c, photoUrl }))}
+            />
+            <div>
+              <h1 className="font-display font-bold text-2xl text-ink">{client.name}</h1>
+              <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                <span className={`pill pill-${client.status}`}>{STATUS_LABEL[client.status]}</span>
+                <span className="text-xs text-inkfaint">{client.niche || "nicho não informado"}</span>
+                {isSoSistema && (
+                  <span className="text-[10.5px] px-2 py-0.5 rounded-full font-medium bg-surface2 text-inksoft border border-border">Só sistema</span>
+                )}
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -521,6 +546,22 @@ export default function ClientDetail() {
                   <p className="text-[10.5px] text-inkfaint mt-1.5">O aceite dos serviços já foi dado em {fmtDate(client.servicesAcceptedAt)} — mudar aqui não gera nova comissão.</p>
                 )}
               </div>
+              <div>
+                <label className="block text-[11px] text-inkfaint mb-1">O que esse cliente vê no portal dele</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {PORTAL_FEATURE_OPTIONS.map((f) => {
+                    const active = editForm.portalFeatures.includes(f.key);
+                    return (
+                      <button key={f.key} type="button" onClick={() => togglePortalFeature(f.key)}
+                        title={f.recommended ? "Recomendado pra todo cliente" : undefined}
+                        className={`text-[12px] font-medium px-2.5 py-1 rounded-lg border transition ${active ? "bg-accent text-white border-accent" : "border-border text-inksoft hover:border-accent"}`}>
+                        {f.label}{f.recommended && " ★"}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[10.5px] text-inkfaint mt-1.5">"Visão geral" sempre aparece. Desmarque o que esse cliente não deve ver (ex: deixar a IA de Marketing só pra quem contratou esse módulo à parte).</p>
+              </div>
               </>
             ) : isSoSistema ? (
               <p className="text-xs text-inkfaint">Esse cliente está no plano só sistema — sem campos de tráfego pago para editar aqui.</p>
@@ -535,6 +576,11 @@ export default function ClientDetail() {
                   </select>
                 </div>
                 <div>
+                  <label className="block text-[11px] text-inkfaint mb-1">Verba diária de anúncios</label>
+                  <input type="number" step="0.01" value={editForm.dailyAdBudget} onChange={(e) => setEditForm({ ...editForm, dailyAdBudget: e.target.value })}
+                    className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink mono" />
+                </div>
+                <div className="sm:col-span-2">
                   <label className="block text-[11px] text-inkfaint mb-1">Criativo ativo</label>
                   <input value={editForm.activeCreative} onChange={(e) => setEditForm({ ...editForm, activeCreative: e.target.value })}
                     placeholder="ex: Vídeo depoimento v3" className="w-full px-2.5 py-1.5 text-sm rounded-md border border-border bg-surface2 text-ink" />

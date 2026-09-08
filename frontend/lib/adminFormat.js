@@ -128,3 +128,40 @@ export const GOAL_STATUS_CLASS = {
 };
 
 export const DECISION_STATUS_LABEL = { ABERTA: "Aberta", CONCLUIDA: "Concluída" };
+
+// --- Fase 4 (Documentos, Processos, Aprovações, Centros de custo, Contas
+// bancárias, Busca global, Permissões) — 08/09/2026 ---
+
+export const DOCUMENT_CATEGORY_OPTIONS = [
+  "Contratos",
+  "Notas fiscais",
+  "Fiscal/Contábil",
+  "Jurídico",
+  "Marca/Identidade visual",
+  "Modelos/Templates",
+  "Outros",
+];
+
+export const PROCESS_TYPE_OPTIONS = [
+  { value: "CLIENTE_ONBOARDING", label: "Onboarding de cliente" },
+  { value: "CLIENTE_OFFBOARDING", label: "Offboarding de cliente" },
+  { value: "FUNCIONARIO_ONBOARDING", label: "Onboarding de funcionário" },
+  { value: "FUNCIONARIO_OFFBOARDING", label: "Offboarding de funcionário" },
+];
+export const PROCESS_TYPE_LABEL = Object.fromEntries(PROCESS_TYPE_OPTIONS.map((o) => [o.value, o.label]));
+
+export const APPROVAL_STATUS_LABEL = { PENDENTE: "Pendente", APROVADA: "Aprovada", RECUSADA: "Recusada" };
+export const APPROVAL_STATUS_CLASS = {
+  PENDENTE: "bg-warningsoft text-warning",
+  APROVADA: "bg-successsoft text-success",
+  RECUSADA: "bg-dangersoft text-danger",
+};
+
+export const PERMISSION_ACTION_LABEL = {
+  view: "Ver",
+  create: "Criar",
+  edit: "Editar",
+  delete: "Excluir",
+  approve: "Aprovar",
+  export: "Exportar",
+};

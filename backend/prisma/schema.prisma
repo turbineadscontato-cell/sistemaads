@@ -119,6 +119,13 @@ model User {
   adminGoalsCreated            AdminGoal[]                @relation("AdminGoalCreatedBy")
   adminMeetingsCreated         AdminPartnerMeeting[]      @relation("AdminPartnerMeetingCreatedBy")
   adminAuditLogEntries         AdminAuditLog[]            @relation("AdminAuditLogUser")
+  // Fase 4 do módulo Administração (07/09/2026): documentos, checklists,
+  // aprovações e permissões granulares por ação.
+  adminDocumentsCreated        AdminDocument[]            @relation("AdminDocumentCreatedBy")
+  adminProcessChecklistsCreated AdminProcessChecklist[]   @relation("AdminProcessChecklistCreatedBy")
+  adminApprovalsRequested      AdminApproval[]            @relation("AdminApprovalRequestedBy")
+  adminApprovalsDecided        AdminApproval[]            @relation("AdminApprovalDecidedBy")
+  adminPermission              AdminUserPermission?       @relation("AdminUserPermissionUser")
 
   // Set only for role = CLIENTE: which client's portal this login can see.
   clientId String?
@@ -150,6 +157,20 @@ model Client {
   nextOptimizationDate DateTime?
   lastOptimizedAt      DateTime?
   activeCreative    String?  // short label for whichever creative is currently live
+  // Foto do cliente (pessoa) no cadastro — só o sócio troca (edição
+  // completa do cliente), mas é visível pra toda a equipe interna
+  // (sócio/gestor/atendente) e pro próprio cliente no portal dele. Mesmo
+  // padrão de avatarUrl (data URL já redimensionada no navegador, sem
+  // servidor de upload separado). Não confundir com logoBase64, que é o
+  // white-label do portal de PACIENTES desse cliente (08/09/2026).
+  photoUrl       String?      @db.Text
+  // Quais abas do portal esse cliente enxerga (chaves de lib/portalFeatures
+  // no frontend — "ia", "pacientes", "leads" etc). Vazio = libera tudo
+  // (comportamento de hoje, sem regressão pros clientes já cadastrados);
+  // só quando o sócio mexe aqui é que passa a restringir de propósito —
+  // pensado pra vender módulos como a IA personalizada como upsell
+  // (08/09/2026).
+  portalFeatures String[]     @default([])
   createdAt      DateTime     @default(now())
 
   // COMPLETO = tráfego pago + sistema. SO_SISTEMA = cliente cancelou o
@@ -941,4 +962,107 @@ model AdminAuditLog {
 
   @@index([entity, createdAt])
   @@index([createdAt])
+}
+
+// Fase 4 do módulo Administração (07/09/2026): biblioteca de documentos,
+// checklists de onboarding/offboarding, fluxo de aprovações, centros de
+// custo (cadastro próprio), contas bancárias (saldo estimado por
+// correspondência de nome, sem integração bancária real) e permissões
+// granulares por ação — preparando o backend pra acesso parcial de
+// funcionários no futuro, sem mudar o acesso real de hoje (só sócios).
+
+model AdminDocument {
+  id          String   @id @default(cuid())
+  name        String
+  category    String
+  year        Int
+  month       Int?
+  mimeType    String
+  size        Int
+  dataBase64  String   @db.Text
+  notes       String?
+  createdAt   DateTime @default(now())
+  createdById String?
+  createdBy   User?    @relation("AdminDocumentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([category, year, month])
+}
+
+enum AdminProcessType {
+  CLIENTE_ONBOARDING
+  CLIENTE_OFFBOARDING
+  FUNCIONARIO_ONBOARDING
+  FUNCIONARIO_OFFBOARDING
+}
+
+model AdminProcessChecklist {
+  id          String             @id @default(cuid())
+  type        AdminProcessType
+  subjectName String
+  notes       String?
+  createdAt   DateTime           @default(now())
+  createdById String?
+  createdBy   User?              @relation("AdminProcessChecklistCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  items       AdminProcessItem[]
+}
+
+model AdminProcessItem {
+  id          String                @id @default(cuid())
+  checklistId String
+  checklist   AdminProcessChecklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+  title       String
+  done        Boolean               @default(false)
+  doneAt      DateTime?
+  order       Int                   @default(0)
+}
+
+enum AdminApprovalStatus {
+  PENDENTE
+  APROVADA
+  RECUSADA
+}
+
+model AdminApproval {
+  id            String              @id @default(cuid())
+  title         String
+  description   String?
+  amount        Float?
+  area          String?
+  status        AdminApprovalStatus @default(PENDENTE)
+  createdAt     DateTime            @default(now())
+  requestedById String?
+  requestedBy   User?               @relation("AdminApprovalRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
+  decidedById   String?
+  decidedBy     User?               @relation("AdminApprovalDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedAt     DateTime?
+  decisionNote  String?
+}
+
+model AdminCostCenter {
+  id        String   @id @default(cuid())
+  name      String
+  status    String   @default("ATIVO")
+  notes     String?
+  createdAt DateTime @default(now())
+}
+
+model AdminBankAccount {
+  id             String   @id @default(cuid())
+  name           String
+  bank           String?
+  type           String   @default("CORRENTE")
+  initialBalance Float    @default(0)
+  status         String   @default("ATIVA")
+  notes          String?
+  createdAt      DateTime @default(now())
+}
+
+// overrides: Json shaped as { [area]: { view, create, edit, delete, approve, export } }.
+// Só é consultado pra quem NÃO é SOCIO — sócio sempre tem acesso total.
+model AdminUserPermission {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation("AdminUserPermissionUser", fields: [userId], references: [id], onDelete: Cascade)
+  overrides Json     @default("{}")
+  updatedAt DateTime @updatedAt
 }

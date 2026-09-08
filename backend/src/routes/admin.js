@@ -5,9 +5,11 @@ const { requireAuth, requireRole } = require("../middleware/auth");
 // ==========================================================================
 // Módulo ADMINISTRAÇÃO — central financeira/administrativa interna da
 // TurbinaADS (Fase 1: Dashboard, Receitas, Despesas, Clientes financeiros,
-// Cobranças, Fluxo de caixa). Só sócios acessam — os dois sócios já
-// existentes usam o role SOCIO, então requireRole("SOCIO") já cobre os
-// dois sem precisar de nenhuma tabela de permissão nova nesta fase.
+// Cobranças, Fluxo de caixa). Hoje só os dois sócios usam o sistema, e
+// requireAdminAccess (fase 4) sempre libera quem é SOCIO — na prática,
+// nada muda pra eles. A tabela AdminUserPermission só existe pra permitir,
+// no futuro, dar acesso PARCIAL a algum funcionário (ex.: um gestor só
+// vendo Relatórios) sem precisar reescrever nada disso — ver função abaixo.
 //
 // Importante: isso NÃO mexe no modelo Payment já existente (usado pra
 // mostrar ao cliente, no portal dele, quanto ele deve à agência). São dois
@@ -15,7 +17,52 @@ const { requireAuth, requireRole } = require("../middleware/auth");
 // ==========================================================================
 
 const router = express.Router();
-router.use(requireAuth, requireRole("SOCIO"));
+
+// --------------------------------------------------------------------------
+// PERMISSÕES POR AÇÃO (fase 4) — substitui o antigo requireRole("SOCIO")
+// fixo. Sócio sempre tem acesso total (nenhuma mudança de comportamento
+// pros dois sócios de hoje). Pra qualquer outro role, só libera a
+// ação/área específica se houver um override explícito em
+// AdminUserPermission — ou seja, por padrão ninguém além de sócio acessa
+// nada aqui, exatamente como era antes; a diferença é que agora é possível
+// conceder acesso parcial no futuro sem mexer em código.
+//
+// Área = primeiro segmento da URL (ex.: "receitas", "documentos"). Ação =
+// derivada do método HTTP, com duas exceções especiais (exportar relatório
+// e aprovar/recusar aprovação não são a mesma coisa que "ver"/"editar").
+// A rota /permissoes em si é sempre exclusiva de sócio, mesmo com
+// qualquer override — impede que alguém se autopromova.
+// --------------------------------------------------------------------------
+
+function areaAndActionFor(req) {
+  const area = req.path.split("/").filter(Boolean)[0] || "";
+  let action = "view";
+  if (area === "relatorios" && req.method === "GET") action = "export";
+  else if (area === "aprovacoes" && req.method === "PATCH") action = "approve";
+  else if (req.method === "POST") action = "create";
+  else if (req.method === "PATCH") action = "edit";
+  else if (req.method === "DELETE") action = "delete";
+  return { area, action };
+}
+
+async function requireAdminAccess(req, res, next) {
+  if (req.user.role === "SOCIO") return next();
+  const area0 = req.path.split("/").filter(Boolean)[0];
+  if (area0 === "permissoes") {
+    return res.status(403).json({ error: "Apenas sócios podem gerenciar permissões." });
+  }
+  try {
+    const { area, action } = areaAndActionFor(req);
+    const perm = await prisma.adminUserPermission.findUnique({ where: { userId: req.user.id } });
+    const allowed = !!(perm && perm.overrides && perm.overrides[area] && perm.overrides[area][action]);
+    if (!allowed) return res.status(403).json({ error: "Você não tem permissão para esta ação na Administração." });
+    return next();
+  } catch (err) {
+    return res.status(403).json({ error: "Você não tem permissão para esta ação na Administração." });
+  }
+}
+
+router.use(requireAuth, requireAdminAccess);
 
 // --------------------------------------------------------------------------
 // AUDITORIA (fase 3, seção 40 do pedido) — em vez de instrumentar cada rota
@@ -41,6 +88,13 @@ const AUDIT_ENTITY_LABEL = {
   "distribuicao-lucros": "Distribuição de lucros",
   "pro-labore": "Pró-labore",
   "reserva-financeira": "Reserva financeira",
+  // Fase 4 (08/09/2026)
+  documentos: "Documento",
+  processos: "Checklist",
+  aprovacoes: "Aprovação",
+  "centros-custo": "Centro de custo",
+  "contas-bancarias": "Conta bancária",
+  permissoes: "Permissão de usuário",
 };
 
 function auditSummaryFrom(body) {
@@ -1690,6 +1744,414 @@ router.get("/relatorios/dre-export", async (req, res) => {
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="dre.csv"`);
   res.send(`﻿${toCsv(linhas, columns)}`);
+});
+
+// ==========================================================================
+// FASE 4 (08/09/2026): Biblioteca de documentos, checklists de onboarding/
+// offboarding, fluxo de aprovações, centros de custo, contas bancárias,
+// busca global e permissões por ação. requireAdminAccess (topo do arquivo)
+// já cobre o acesso — sócio sempre passa, qualquer outro role só com
+// override explícito em AdminUserPermission (nenhum concedido nesta fase).
+// ==========================================================================
+
+// ---------------------------------------------------------------------
+// DOCUMENTOS — biblioteca de arquivos da empresa, organizada por
+// ano/mês/categoria. Mesmo padrão de /api/files (metadata na listagem,
+// conteúdo só no download) — mas exclusão aqui é real (não é lançamento
+// financeiro, então não precisa do padrão de status terminal).
+// ---------------------------------------------------------------------
+
+router.get("/documentos", async (req, res) => {
+  const { category, year, month } = req.query;
+  const where = {};
+  if (category) where.category = category;
+  if (year) where.year = Number(year);
+  if (month) where.month = Number(month);
+  const rows = await prisma.adminDocument.findMany({
+    where,
+    select: { id: true, name: true, category: true, year: true, month: true, mimeType: true, size: true, notes: true, createdAt: true, createdBy: { select: { name: true } } },
+    orderBy: [{ year: "desc" }, { month: "desc" }, { createdAt: "desc" }],
+  });
+  res.json(rows.map((d) => ({ ...d, createdBy: d.createdBy?.name || "—" })));
+});
+
+router.get("/documentos/download/:id", async (req, res) => {
+  const doc = await prisma.adminDocument.findUnique({ where: { id: req.params.id } });
+  if (!doc) return res.status(404).json({ error: "Documento não encontrado." });
+  res.json(doc);
+});
+
+router.post("/documentos", async (req, res) => {
+  const { name, category, year, month, mimeType, dataBase64, notes } = req.body || {};
+  if (!name || !String(name).trim()) return res.status(400).json({ error: "Informe o nome do documento." });
+  if (!dataBase64 || !mimeType) return res.status(400).json({ error: "Selecione um arquivo." });
+  if (dataBase64.length > MAX_FILE_B64_CHARS) return res.status(400).json({ error: "Arquivo muito grande." });
+  const size = Math.ceil((dataBase64.length * 3) / 4);
+  const created = await prisma.adminDocument.create({
+    data: {
+      name: String(name).trim(),
+      category: category || "Outros",
+      year: year ? Number(year) : new Date().getFullYear(),
+      month: month ? Number(month) : null,
+      mimeType,
+      size,
+      dataBase64,
+      notes: notes || null,
+      createdById: req.user.id,
+    },
+    select: { id: true, name: true, category: true, year: true, month: true, mimeType: true, size: true, notes: true, createdAt: true },
+  });
+  res.status(201).json(created);
+});
+
+router.delete("/documentos/:id", async (req, res) => {
+  const existing = await prisma.adminDocument.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Documento não encontrado." });
+  await prisma.adminDocument.delete({ where: { id: req.params.id } });
+  res.json({ id: existing.id, name: existing.name, deleted: true });
+});
+
+// ---------------------------------------------------------------------
+// PROCESSOS — checklists de onboarding/offboarding (cliente e
+// funcionário). Cada tipo já vem com um checklist padrão sugerido, que
+// pode ser editado na hora de criar; mesmo padrão pai/filho de
+// Reunião/Decisão (fase 3).
+// ---------------------------------------------------------------------
+
+const DEFAULT_CHECKLIST_ITEMS = {
+  CLIENTE_ONBOARDING: [
+    "Enviar contrato para assinatura",
+    "Criar acesso ao portal do cliente",
+    "Coletar acessos (Meta Ads, página, WhatsApp)",
+    "Configurar conta de anúncios",
+    "Agendar reunião de boas-vindas",
+    "Definir dia de otimização e gestor responsável",
+  ],
+  CLIENTE_OFFBOARDING: [
+    "Confirmar e registrar motivo do cancelamento",
+    "Pausar campanhas ativas",
+    "Revogar acessos concedidos",
+    "Entregar/exportar materiais do cliente",
+    "Encerrar contrato",
+  ],
+  FUNCIONARIO_ONBOARDING: [
+    "Assinar contrato",
+    "Criar login no sistema",
+    "Apresentar processos internos",
+    "Definir forma e dia de pagamento",
+    "Adicionar aos grupos de comunicação",
+  ],
+  FUNCIONARIO_OFFBOARDING: [
+    "Registrar data de saída",
+    "Revogar acessos e senhas",
+    "Acertar pagamento final",
+    "Remover dos grupos de comunicação",
+    "Transferir clientes/tarefas em aberto",
+  ],
+};
+
+router.get("/processos/modelos", async (req, res) => {
+  res.json(DEFAULT_CHECKLIST_ITEMS);
+});
+
+router.get("/processos", async (req, res) => {
+  const { type } = req.query;
+  const rows = await prisma.adminProcessChecklist.findMany({
+    where: type ? { type } : undefined,
+    include: { items: { orderBy: { order: "asc" } }, createdBy: { select: { name: true } } },
+    orderBy: { createdAt: "desc" },
+  });
+  res.json(rows.map((c) => ({ ...c, createdBy: c.createdBy?.name || "—" })));
+});
+
+router.post("/processos", async (req, res) => {
+  const { type, subjectName, notes, items } = req.body || {};
+  if (!type || !DEFAULT_CHECKLIST_ITEMS[type]) return res.status(400).json({ error: "Tipo de checklist inválido." });
+  if (!subjectName || !String(subjectName).trim()) return res.status(400).json({ error: "Informe o nome (cliente ou funcionário)." });
+  const itemTitles = Array.isArray(items) && items.length
+    ? items.map((i) => String(i).trim()).filter(Boolean)
+    : DEFAULT_CHECKLIST_ITEMS[type];
+  const created = await prisma.adminProcessChecklist.create({
+    data: {
+      type,
+      subjectName: String(subjectName).trim(),
+      notes: notes || null,
+      createdById: req.user.id,
+      items: { create: itemTitles.map((title, i) => ({ title, order: i })) },
+    },
+    include: { items: { orderBy: { order: "asc" } }, createdBy: { select: { name: true } } },
+  });
+  res.status(201).json({ ...created, createdBy: created.createdBy?.name || "—" });
+});
+
+router.post("/processos/:id/itens", async (req, res) => {
+  const checklist = await prisma.adminProcessChecklist.findUnique({ where: { id: req.params.id }, include: { items: true } });
+  if (!checklist) return res.status(404).json({ error: "Checklist não encontrado." });
+  const { title } = req.body || {};
+  if (!title || !String(title).trim()) return res.status(400).json({ error: "Descreva o item." });
+  const created = await prisma.adminProcessItem.create({ data: { checklistId: checklist.id, title: String(title).trim(), order: checklist.items.length } });
+  res.status(201).json(created);
+});
+
+router.patch("/processos/:id/itens/:itemId", async (req, res) => {
+  const item = await prisma.adminProcessItem.findUnique({ where: { id: req.params.itemId } });
+  if (!item || item.checklistId !== req.params.id) return res.status(404).json({ error: "Item não encontrado." });
+  const { done, title } = req.body || {};
+  const data = {};
+  if (done !== undefined) { data.done = !!done; data.doneAt = done ? new Date() : null; }
+  if (title !== undefined) data.title = String(title).trim();
+  const updated = await prisma.adminProcessItem.update({ where: { id: req.params.itemId }, data });
+  res.json(updated);
+});
+
+router.delete("/processos/:id", async (req, res) => {
+  const existing = await prisma.adminProcessChecklist.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Checklist não encontrado." });
+  await prisma.adminProcessChecklist.delete({ where: { id: req.params.id } });
+  res.json({ id: existing.id, deleted: true });
+});
+
+// ---------------------------------------------------------------------
+// APROVAÇÕES — fluxo formal de solicitação/decisão. Com só dois sócios,
+// qualquer um dos dois pode decidir, inclusive quem pediu (não faz
+// sentido travar nisso com só duas pessoas na empresa).
+// ---------------------------------------------------------------------
+
+router.get("/aprovacoes", async (req, res) => {
+  const { status } = req.query;
+  const rows = await prisma.adminApproval.findMany({
+    where: status ? { status } : undefined,
+    include: { requestedBy: { select: { name: true } }, decidedBy: { select: { name: true } } },
+    orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+  });
+  res.json(rows.map((a) => ({ ...a, requestedBy: a.requestedBy?.name || "—", decidedBy: a.decidedBy?.name || null })));
+});
+
+router.post("/aprovacoes", async (req, res) => {
+  const { title, description, amount, area } = req.body || {};
+  if (!title || !String(title).trim()) return res.status(400).json({ error: "Informe o título da solicitação." });
+  const created = await prisma.adminApproval.create({
+    data: {
+      title: String(title).trim(),
+      description: description || null,
+      amount: amount != null && amount !== "" ? Number(amount) : null,
+      area: area || null,
+      requestedById: req.user.id,
+    },
+    include: { requestedBy: { select: { name: true } } },
+  });
+  res.status(201).json({ ...created, requestedBy: created.requestedBy?.name || "—", decidedBy: null });
+});
+
+router.patch("/aprovacoes/:id", async (req, res) => {
+  const existing = await prisma.adminApproval.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Aprovação não encontrada." });
+  if (existing.status !== "PENDENTE") return res.status(400).json({ error: "Essa solicitação já foi decidida." });
+  const { status, decisionNote } = req.body || {};
+  if (!status || !["APROVADA", "RECUSADA"].includes(status)) return res.status(400).json({ error: "Informe a decisão (aprovar ou recusar)." });
+  const updated = await prisma.adminApproval.update({
+    where: { id: req.params.id },
+    data: { status, decisionNote: decisionNote || null, decidedById: req.user.id, decidedAt: new Date() },
+    include: { requestedBy: { select: { name: true } }, decidedBy: { select: { name: true } } },
+  });
+  res.json({ ...updated, requestedBy: updated.requestedBy?.name || "—", decidedBy: updated.decidedBy?.name || null });
+});
+
+router.delete("/aprovacoes/:id", async (req, res) => {
+  const existing = await prisma.adminApproval.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Aprovação não encontrada." });
+  if (existing.status !== "PENDENTE") return res.status(400).json({ error: "Só é possível cancelar solicitações pendentes." });
+  await prisma.adminApproval.delete({ where: { id: req.params.id } });
+  res.json({ id: existing.id, deleted: true });
+});
+
+// ---------------------------------------------------------------------
+// CENTROS DE CUSTO — cadastro próprio; "total gasto" estimado casando o
+// nome com o campo de texto livre `costCenter` já usado em Despesas
+// (mesma técnica de Fornecedores, sem chave estrangeira nova).
+// ---------------------------------------------------------------------
+
+router.get("/centros-custo", async (req, res) => {
+  const rows = await prisma.adminCostCenter.findMany({ orderBy: { name: "asc" } });
+  const expenses = await prisma.adminExpense.findMany({ where: { status: { not: "CANCELADO" }, NOT: { costCenter: null } }, select: { costCenter: true, amount: true } });
+  const spendByName = new Map();
+  for (const e of expenses) {
+    const key = (e.costCenter || "").trim().toLowerCase();
+    if (!key) continue;
+    spendByName.set(key, (spendByName.get(key) || 0) + e.amount);
+  }
+  res.json(rows.map((c) => ({ ...c, totalGasto: spendByName.get(c.name.trim().toLowerCase()) || 0 })));
+});
+
+router.post("/centros-custo", async (req, res) => {
+  const { name, notes } = req.body || {};
+  if (!name || !String(name).trim()) return res.status(400).json({ error: "Informe o nome do centro de custo." });
+  const created = await prisma.adminCostCenter.create({ data: { name: String(name).trim(), notes: notes || null } });
+  res.status(201).json({ ...created, totalGasto: 0 });
+});
+
+router.patch("/centros-custo/:id", async (req, res) => {
+  const existing = await prisma.adminCostCenter.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Centro de custo não encontrado." });
+  const { name, status, notes } = req.body || {};
+  const data = {};
+  if (name !== undefined) data.name = String(name).trim();
+  if (status !== undefined) data.status = status;
+  if (notes !== undefined) data.notes = notes || null;
+  const updated = await prisma.adminCostCenter.update({ where: { id: req.params.id }, data });
+  res.json(updated);
+});
+
+router.delete("/centros-custo/:id", async (req, res) => {
+  const existing = await prisma.adminCostCenter.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Centro de custo não encontrado." });
+  const updated = await prisma.adminCostCenter.update({ where: { id: req.params.id }, data: { status: "INATIVO" } });
+  res.json(updated);
+});
+
+// ---------------------------------------------------------------------
+// CONTAS BANCÁRIAS — cadastro próprio com saldo ESTIMADO (saldo inicial +
+// receitas pagas - despesas pagas casadas pelo nome no campo `account`,
+// mesma técnica de Centros de Custo/Fornecedores). Não é integração
+// bancária real, de propósito.
+// ---------------------------------------------------------------------
+
+router.get("/contas-bancarias", async (req, res) => {
+  const rows = await prisma.adminBankAccount.findMany({ orderBy: { name: "asc" } });
+  const [revenues, expenses] = await Promise.all([
+    prisma.adminRevenue.findMany({ where: { status: "PAGO", NOT: { account: null } }, select: { account: true, amount: true } }),
+    prisma.adminExpense.findMany({ where: { status: "PAGO", NOT: { account: null } }, select: { account: true, amount: true } }),
+  ]);
+  const delta = new Map();
+  for (const r of revenues) {
+    const key = (r.account || "").trim().toLowerCase();
+    if (!key) continue;
+    delta.set(key, (delta.get(key) || 0) + r.amount);
+  }
+  for (const e of expenses) {
+    const key = (e.account || "").trim().toLowerCase();
+    if (!key) continue;
+    delta.set(key, (delta.get(key) || 0) - e.amount);
+  }
+  res.json(rows.map((a) => ({ ...a, saldoEstimado: a.initialBalance + (delta.get(a.name.trim().toLowerCase()) || 0) })));
+});
+
+router.post("/contas-bancarias", async (req, res) => {
+  const { name, bank, type, initialBalance, notes } = req.body || {};
+  if (!name || !String(name).trim()) return res.status(400).json({ error: "Informe o nome da conta." });
+  const created = await prisma.adminBankAccount.create({
+    data: { name: String(name).trim(), bank: bank || null, type: type || "CORRENTE", initialBalance: initialBalance != null && initialBalance !== "" ? Number(initialBalance) : 0, notes: notes || null },
+  });
+  res.status(201).json({ ...created, saldoEstimado: created.initialBalance });
+});
+
+router.patch("/contas-bancarias/:id", async (req, res) => {
+  const existing = await prisma.adminBankAccount.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Conta não encontrada." });
+  const { name, bank, type, initialBalance, status, notes } = req.body || {};
+  const data = {};
+  if (name !== undefined) data.name = String(name).trim();
+  if (bank !== undefined) data.bank = bank || null;
+  if (type !== undefined) data.type = type;
+  if (initialBalance !== undefined) data.initialBalance = initialBalance != null && initialBalance !== "" ? Number(initialBalance) : 0;
+  if (status !== undefined) data.status = status;
+  if (notes !== undefined) data.notes = notes || null;
+  const updated = await prisma.adminBankAccount.update({ where: { id: req.params.id }, data });
+  res.json(updated);
+});
+
+router.delete("/contas-bancarias/:id", async (req, res) => {
+  const existing = await prisma.adminBankAccount.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "Conta não encontrada." });
+  const updated = await prisma.adminBankAccount.update({ where: { id: req.params.id }, data: { status: "INATIVA" } });
+  res.json(updated);
+});
+
+// ---------------------------------------------------------------------
+// BUSCA GLOBAL — varre as principais áreas da Administração de uma vez.
+// Simplificado: o clique no resultado troca de aba no frontend, sem
+// deep-link pra linha exata.
+// ---------------------------------------------------------------------
+
+router.get("/busca", async (req, res) => {
+  const q = String(req.query.q || "").trim();
+  if (q.length < 2) return res.json({ query: q, grupos: [] });
+  const like = { contains: q, mode: "insensitive" };
+  const [receitas, despesas, contratos, equipe, fornecedores, ferramentas, documentos, metas, reunioes] = await Promise.all([
+    prisma.adminRevenue.findMany({ where: { description: like }, take: 5, select: { id: true, description: true } }),
+    prisma.adminExpense.findMany({ where: { description: like }, take: 5, select: { id: true, description: true } }),
+    prisma.adminContract.findMany({ where: { OR: [{ title: like }, { counterpartyName: like }] }, take: 5, select: { id: true, title: true } }),
+    prisma.adminEmployee.findMany({ where: { name: like }, take: 5, select: { id: true, name: true } }),
+    prisma.adminSupplier.findMany({ where: { name: like }, take: 5, select: { id: true, name: true } }),
+    prisma.adminTool.findMany({ where: { name: like }, take: 5, select: { id: true, name: true } }),
+    prisma.adminDocument.findMany({ where: { name: like }, take: 5, select: { id: true, name: true } }),
+    prisma.adminGoal.findMany({ where: { title: like }, take: 5, select: { id: true, title: true } }),
+    prisma.adminPartnerMeeting.findMany({ where: { title: like }, take: 5, select: { id: true, title: true } }),
+  ]);
+  const grupos = [
+    { area: "receitas", label: "Receitas", itens: receitas.map((r) => ({ id: r.id, label: r.description })) },
+    { area: "despesas", label: "Despesas", itens: despesas.map((r) => ({ id: r.id, label: r.description })) },
+    { area: "contratos", label: "Contratos", itens: contratos.map((r) => ({ id: r.id, label: r.title })) },
+    { area: "equipe", label: "Equipe", itens: equipe.map((r) => ({ id: r.id, label: r.name })) },
+    { area: "fornecedores", label: "Fornecedores", itens: fornecedores.map((r) => ({ id: r.id, label: r.name })) },
+    { area: "ferramentas", label: "Ferramentas", itens: ferramentas.map((r) => ({ id: r.id, label: r.name })) },
+    { area: "documentos", label: "Documentos", itens: documentos.map((r) => ({ id: r.id, label: r.name })) },
+    { area: "metas", label: "Metas", itens: metas.map((r) => ({ id: r.id, label: r.title })) },
+    { area: "reunioes", label: "Reuniões", itens: reunioes.map((r) => ({ id: r.id, label: r.title })) },
+  ].filter((g) => g.itens.length > 0);
+  res.json({ query: q, grupos });
+});
+
+// ---------------------------------------------------------------------
+// PERMISSÕES — gestão de overrides por usuário/área/ação. Rota sempre
+// exclusiva de sócio (bloqueada até pra quem tem override — ver
+// requireAdminAccess no topo do arquivo). Hoje ninguém tem override
+// concedido; existe só o mecanismo, pronto pra uso futuro.
+// ---------------------------------------------------------------------
+
+const PERMISSION_AREAS = [
+  { key: "receitas", label: "Receitas" },
+  { key: "despesas", label: "Despesas" },
+  { key: "clientes", label: "Clientes financeiros" },
+  { key: "cobrancas", label: "Cobranças" },
+  { key: "contratos", label: "Contratos" },
+  { key: "equipe", label: "Equipe" },
+  { key: "folha", label: "Folha" },
+  { key: "ferramentas", label: "Ferramentas" },
+  { key: "fornecedores", label: "Fornecedores" },
+  { key: "documentos", label: "Documentos" },
+  { key: "processos", label: "Checklists" },
+  { key: "aprovacoes", label: "Aprovações" },
+  { key: "centros-custo", label: "Centros de custo" },
+  { key: "contas-bancarias", label: "Contas bancárias" },
+  { key: "relatorios", label: "Relatórios" },
+];
+const PERMISSION_ACTIONS = ["view", "create", "edit", "delete", "approve", "export"];
+
+router.get("/permissoes", async (req, res) => {
+  const [users, perms] = await Promise.all([
+    prisma.user.findMany({ where: { role: { in: ["GESTOR", "ATENDENTE"] }, active: true }, select: { id: true, name: true, role: true }, orderBy: { name: "asc" } }),
+    prisma.adminUserPermission.findMany(),
+  ]);
+  const permByUser = new Map(perms.map((p) => [p.userId, p.overrides]));
+  res.json({
+    areas: PERMISSION_AREAS,
+    actions: PERMISSION_ACTIONS,
+    usuarios: users.map((u) => ({ id: u.id, name: u.name, role: u.role, overrides: permByUser.get(u.id) || {} })),
+  });
+});
+
+router.patch("/permissoes/:userId", async (req, res) => {
+  const target = await prisma.user.findUnique({ where: { id: req.params.userId } });
+  if (!target) return res.status(404).json({ error: "Usuário não encontrado." });
+  if (target.role === "SOCIO") return res.status(400).json({ error: "Sócio já tem acesso total — não precisa de permissão." });
+  const { overrides } = req.body || {};
+  const updated = await prisma.adminUserPermission.upsert({
+    where: { userId: target.id },
+    create: { userId: target.id, overrides: overrides || {} },
+    update: { overrides: overrides || {} },
+  });
+  res.json(updated);
 });
 
 module.exports = router;

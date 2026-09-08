@@ -5,6 +5,7 @@ const { requireAuth, requireRole } = require("../middleware/auth");
 const { nextOccurrence, advanceAfterOptimizing } = require("../utils/optimizationSchedule");
 const { addBusinessDays } = require("../utils/businessDays");
 const { SERVICE_OPTIONS, SERVICE_LABEL, COMMISSION_PER_SERVICE } = require("../utils/services");
+const { sanitizePortalFeatures } = require("../utils/portalFeatures");
 const { onlyDigits } = require("../utils/identifier");
 
 const VALID_SERVICE_KEYS = SERVICE_OPTIONS.map((s) => s.key);
@@ -346,24 +347,34 @@ function optimizationPatch(existing, { optimizationDay, markOptimized }) {
 router.patch("/:id", requireRole("SOCIO", "GESTOR"), async (req, res) => {
   // A gestor may only touch their own clients, and only a limited field set:
   // day-to-day notes plus the fields they're responsible for operationally
-  // (including marking the weekly otimização as feita — it's their job).
+  // (including marking the weekly otimização as feita, e desde 08/09/2026
+  // também a verba diária de anúncios — são coisas do dia a dia da gestão
+  // de tráfego daquele cliente, não dados administrativos/financeiros do
+  // contrato, que continuam exclusivos do sócio).
   if (req.user.role === "GESTOR") {
     const owned = await prisma.client.findFirst({ where: { id: req.params.id, gestorId: req.user.id } });
     if (!owned) return res.status(403).json({ error: "Você não tem acesso a esse cliente." });
-    const { notes, optimizationDay, activeCreative, markOptimized } = req.body || {};
+    const { notes, optimizationDay, activeCreative, dailyAdBudget, markOptimized } = req.body || {};
     const client = await prisma.client.update({
       where: { id: req.params.id },
       data: {
         ...(notes !== undefined && { notes }),
         ...(optimizationDay !== undefined && { optimizationDay: optimizationDay != null && optimizationDay !== "" ? Number(optimizationDay) : null }),
         ...(activeCreative !== undefined && { activeCreative: activeCreative || null }),
+        ...(dailyAdBudget !== undefined && { dailyAdBudget: dailyAdBudget != null && dailyAdBudget !== "" ? Number(dailyAdBudget) : null }),
         ...optimizationPatch(owned, { optimizationDay, markOptimized }),
       },
     });
     return res.json(client);
   }
 
-  const { name, niche, status, plan, monthlyValue, dailyAdBudget, startDate, gestorId, notes, optimizationDay, activeCreative, planType, markOptimized, services, otherServiceNote, countsInFinance } = req.body || {};
+  const { name, niche, status, plan, monthlyValue, dailyAdBudget, startDate, gestorId, notes, optimizationDay, activeCreative, photoUrl, planType, markOptimized, services, otherServiceNote, countsInFinance, portalFeatures } = req.body || {};
+  if (photoUrl != null && typeof photoUrl !== "string") {
+    return res.status(400).json({ error: "Foto inválida." });
+  }
+  if (photoUrl && photoUrl.length > 3_000_000) {
+    return res.status(400).json({ error: "Imagem muito grande." });
+  }
   try {
     const existing = await prisma.client.findUnique({ where: { id: req.params.id } });
     if (!existing) return res.status(404).json({ error: "Cliente não encontrado." });
@@ -382,6 +393,8 @@ router.patch("/:id", requireRole("SOCIO", "GESTOR"), async (req, res) => {
         ...(notes !== undefined && { notes }),
         ...(optimizationDay !== undefined && { optimizationDay: optimizationDay != null && optimizationDay !== "" ? Number(optimizationDay) : null }),
         ...(activeCreative !== undefined && { activeCreative: activeCreative || null }),
+        ...(photoUrl !== undefined && { photoUrl: photoUrl || null }),
+        ...(portalFeatures !== undefined && { portalFeatures: sanitizePortalFeatures(portalFeatures) }),
         ...(planType !== undefined && { planType: planType === "SO_SISTEMA" ? "SO_SISTEMA" : "COMPLETO" }),
         ...(cleanServices !== undefined && { services: cleanServices, otherServiceNote: cleanServices.includes("OUTRO") ? (otherServiceNote || null) : null }),
         ...(countsInFinance !== undefined && { countsInFinance: !!countsInFinance }),

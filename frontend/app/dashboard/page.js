@@ -687,7 +687,11 @@ export default function Dashboard() {
                     <tr key={c.id} className="border-t border-border hover:bg-surface2/60 transition">
                       <td className="px-4.5 py-3 min-w-[200px]">
                         <Link href={`/dashboard/clientes/${c.id}`} className="flex items-center gap-2.5">
-                          <span className="w-8 h-8 rounded-full bg-accentsoft text-accent text-[11px] font-bold flex items-center justify-center shrink-0">{initials(c.name)}</span>
+                          {c.photoUrl ? (
+                            <img src={c.photoUrl} alt={c.name} className="w-8 h-8 rounded-full object-cover shrink-0" />
+                          ) : (
+                            <span className="w-8 h-8 rounded-full bg-accentsoft text-accent text-[11px] font-bold flex items-center justify-center shrink-0">{initials(c.name)}</span>
+                          )}
                           <div className="min-w-0">
                             <div className="font-medium text-ink hover:text-accent transition truncate">{c.name}</div>
                             <div className="text-xs text-inkfaint truncate">{c.niche || "—"}</div>

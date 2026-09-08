@@ -22,7 +22,9 @@ function sameDay(a, b) {
 }
 
 function fmtTime(d) {
-  return new Date(d).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  // timeZone fixo (Brasília) em vez de depender do fuso do navegador —
+  // corrige reunião aparecendo com horário errado (08/09/2026).
+  return new Date(d).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" });
 }
 
 export default function MeetingsCalendar({ meetings, leads, onChange }) {
@@ -70,7 +72,11 @@ export default function MeetingsCalendar({ meetings, leads, onChange }) {
         method: "POST",
         body: {
           leadId: form.leadId || null,
-          scheduledAt: `${form.date}T${form.time}:00`,
+          // "-03:00" fixo (Brasília, sem horário de verão desde 2019) — sem
+          // isso o backend interpretava o horário digitado como UTC, e a
+          // reunião marcada pra 10h aparecia às 7h pra todo mundo
+          // (08/09/2026).
+          scheduledAt: `${form.date}T${form.time}:00-03:00`,
           notes: form.notes,
         },
       });

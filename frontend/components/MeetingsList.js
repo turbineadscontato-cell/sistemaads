@@ -27,7 +27,10 @@ function fmtDay(d) {
 }
 
 function fmtTime(d) {
-  return new Date(d).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  // timeZone fixo em vez de depender do fuso do navegador de quem estiver
+  // olhando — corrige o bug de horário de reunião aparecendo 3h adiantado/
+  // atrasado (08/09/2026).
+  return new Date(d).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" });
 }
 
 export default function MeetingsList({ meetings, onChange }) {

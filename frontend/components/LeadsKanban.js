@@ -259,7 +259,7 @@ export default function LeadsKanban({ leads, onChange, loading }) {
                   <div className="space-y-1.5">
                     {openLeadData.meetings.map((m) => (
                       <div key={m.id} className="text-[11.5px] text-inksoft bg-surface2/60 border border-border rounded-lg px-2.5 py-1.5">
-                        {new Date(m.scheduledAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} · {m.status}
+                        {new Date(m.scheduledAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" })} · {m.status}
                       </div>
                     ))}
                   </div>

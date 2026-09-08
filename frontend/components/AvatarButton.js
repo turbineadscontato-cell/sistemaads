@@ -49,9 +49,13 @@ function resizeToDataUrl(file) {
 
 // Avatar clicável e auto-suficiente: mostra a foto (ou as iniciais, se não
 // tiver foto ainda), e ao clicar abre o seletor de arquivo, redimensiona,
-// envia pra API e avisa o componente pai via onSaved — usado tanto no
-// painel interno (sócio/gestor/atendente) quanto no portal do cliente.
-export default function AvatarButton({ src, name, onSaved, size = 36 }) {
+// envia pra API e avisa o componente pai via onSaved — usado no painel
+// interno (sócio/gestor/atendente), no portal do cliente e (endpoint/field
+// customizados, 08/09/2026) na foto do CLIENTE no cadastro dele. Com
+// readOnly, só mostra a foto/iniciais, sem botão de trocar — usado por
+// quem pode ver a foto mas não editar (gestor/atendente/o próprio cliente
+// vendo a foto que o sócio colocou).
+export default function AvatarButton({ src, name, onSaved, size = 36, endpoint = "/api/auth/avatar", field = "avatarUrl", readOnly = false }) {
   const inputRef = useRef(null);
   const [saving, setSaving] = useState(false);
 
@@ -70,8 +74,8 @@ export default function AvatarButton({ src, name, onSaved, size = 36 }) {
     setSaving(true);
     try {
       const dataUrl = await resizeToDataUrl(file);
-      const updated = await api("/api/auth/avatar", { method: "PATCH", body: { avatarUrl: dataUrl } });
-      onSaved?.(updated.avatarUrl);
+      const updated = await api(endpoint, { method: "PATCH", body: { [field]: dataUrl } });
+      onSaved?.(updated[field]);
     } catch (err) {
       alert(err.message || "Não foi possível atualizar a foto.");
     } finally {
@@ -79,12 +83,29 @@ export default function AvatarButton({ src, name, onSaved, size = 36 }) {
     }
   }
 
+  if (readOnly) {
+    return (
+      <div className="relative shrink-0 rounded-full overflow-hidden" style={{ width: size, height: size }} title={name}>
+        {src ? (
+          <img src={src} alt={name} className="w-full h-full object-cover" />
+        ) : (
+          <div
+            className="w-full h-full bg-gradient-to-br from-accent to-accentink text-white font-bold flex items-center justify-center"
+            style={{ fontSize: Math.max(10, Math.round(size * 0.36)) }}
+          >
+            {initials(name)}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <button
       type="button"
       onClick={() => inputRef.current?.click()}
       disabled={saving}
-      title="Trocar foto de perfil"
+      title="Trocar foto"
       className="relative shrink-0 rounded-full overflow-hidden group focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
       style={{ width: size, height: size }}
     >
