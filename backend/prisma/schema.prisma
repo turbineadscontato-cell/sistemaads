@@ -98,6 +98,12 @@ model User {
   aiMessages     AiMessage[]
   aiReferenceImages AiReferenceImage[]
   clientMetricEntries ClientMetricEntry[]
+  // Projetos de site criados no construtor de sites com IA (13/09/2026) —
+  // só sócio/gestor usam essa ferramenta, uso interno da equipe.
+  aiSiteProjects AiSiteProject[]
+  // Inscrições de notificação push (13/09/2026) — um login pode ter mais de
+  // uma (celular + computador, por exemplo).
+  pushSubscriptions PushSubscription[]
 
   // Módulo Administração (financeiro interno da própria agência) — só
   // sócios usam, mas o registro de quem lançou cada coisa fica de qualquer
@@ -227,6 +233,9 @@ model Client {
   // Fase 2 do módulo Administração: contratos vinculados a esse cliente
   // (reaproveita o cadastro já existente — nunca duplica cliente).
   adminContracts AdminContract[] @relation("AdminContractClient")
+  // Projetos de site do construtor de sites com IA que foram vinculados a
+  // esse cliente (opcional — dá pra criar um projeto solto, sem cliente).
+  aiSiteProjects AiSiteProject[]
 }
 
 // Registro manual de métricas de campanha (enquanto o app do Meta for
@@ -610,6 +619,50 @@ model AiReferenceImage {
   createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
 
   @@index([createdAt])
+}
+
+// ==========================================================================
+// Construtor de sites com IA (13/09/2026) — chat + prévia ao vivo, uso
+// interno (sócio/gestor), separado dos assistentes de texto acima porque
+// aqui cada resposta do assistente pode carregar uma versão inteira nova de
+// página (htmlSnapshot), não só uma resposta de texto solta. A prévia ao
+// vivo do frontend sempre usa o htmlSnapshot mais recente do projeto.
+// ==========================================================================
+model AiSiteProject {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  createdById String
+  createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  messages AiSiteMessage[]
+
+  @@index([createdById, updatedAt])
+}
+
+model AiSiteMessage {
+  id      String @id @default(cuid())
+  role    String // "user" | "assistant"
+  // Texto bruto da mensagem (do usuário) ou resposta bruta da IA (comentário
+  // + bloco ```html quando ela entrega/atualiza o site). O frontend separa o
+  // comentário do código pra exibir na bolha do chat; ver stripHtmlBlock em
+  // routes/aiSites.js.
+  content String @db.Text
+  // Preenchido só nas respostas do assistente que geraram/atualizaram o
+  // site — sempre o HTML completo da página (nunca um diff), pra a prévia
+  // só precisar renderizar o snapshot mais recente direto num iframe.
+  htmlSnapshot String? @db.Text
+  createdAt    DateTime @default(now())
+
+  projectId String
+  project   AiSiteProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
 }
 
 // ==========================================================================
@@ -1065,4 +1118,40 @@ model AdminUserPermission {
   user      User     @relation("AdminUserPermissionUser", fields: [userId], references: [id], onDelete: Cascade)
   overrides Json     @default("{}")
   updatedAt DateTime @updatedAt
+}
+
+// Notificações push (13/09/2026) — inscrições de push por login/dispositivo.
+// endpoint é a URL única que o serviço de push do navegador gera pra aquele
+// dispositivo — reinscrever o mesmo dispositivo atualiza em vez de duplicar
+// (upsert por endpoint na rota). Uma pessoa com celular + computador tem duas
+// linhas aqui e recebe o aviso nos dois.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  endpoint  String   @unique @db.Text
+  p256dh    String   @db.Text
+  auth      String   @db.Text
+  createdAt DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Trava de "já avisei isso" pro job periódico de notificações — evita mandar
+// o mesmo push de novo a cada vez que o job roda enquanto a condição continua
+// verdadeira (ex: pagamento segue atrasado por vários dias). dateKey é a data
+// de hoje pra avisos recorrentes (um por dia, enquanto durar) ou "once" pra
+// avisos de evento único (ex: uma reunião específica, só uma vez). O
+// @@unique nos três campos juntos é o que garante "criar ou desistir se já
+// existe" de forma atômica — sem essa trava dois avisos podiam sair ao mesmo
+// tempo se o job rodasse em paralelo consigo mesmo.
+model NotificationLog {
+  id        String   @id @default(cuid())
+  kind      String
+  refId     String
+  dateKey   String
+  createdAt DateTime @default(now())
+
+  @@unique([kind, refId, dateKey])
 }

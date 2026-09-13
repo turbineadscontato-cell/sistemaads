@@ -1,6 +1,7 @@
 import "./globals.css";
 import { LOGO_SIDEBAR_SRC } from "../lib/logo";
 import ServiceWorkerRegister from "../components/ServiceWorkerRegister";
+import PushNotifications from "../components/PushNotifications";
 
 export const metadata = {
   title: "Painel TurbinaADS",
@@ -37,6 +38,7 @@ export default function RootLayout({ children }) {
     <html lang="pt-BR">
       <body className="font-body">
         <ServiceWorkerRegister />
+        <PushNotifications />
         {children}
       </body>
     </html>

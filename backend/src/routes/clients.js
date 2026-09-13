@@ -7,6 +7,7 @@ const { addBusinessDays } = require("../utils/businessDays");
 const { SERVICE_OPTIONS, SERVICE_LABEL, COMMISSION_PER_SERVICE } = require("../utils/services");
 const { sanitizePortalFeatures } = require("../utils/portalFeatures");
 const { onlyDigits } = require("../utils/identifier");
+const { notifyClientCreated } = require("../jobs/notifications");
 
 const VALID_SERVICE_KEYS = SERVICE_OPTIONS.map((s) => s.key);
 function sanitizeServices(services) {
@@ -153,6 +154,10 @@ router.post("/", requireRole("SOCIO", "GESTOR"), async (req, res) => {
       })),
     });
   }
+
+  // Fire-and-forget — um problema ao mandar a notificação nunca deve
+  // impedir o cadastro do cliente de ser confirmado pra quem está usando.
+  notifyClientCreated(client).catch((err) => console.error("Erro ao notificar cliente novo:", err));
 
   res.status(201).json(client);
 });

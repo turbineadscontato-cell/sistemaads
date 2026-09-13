@@ -35,6 +35,8 @@ export default function ClientReports({ clientId, canManage }) {
   const [csvText, setCsvText] = useState("");
   const [csvFileName, setCsvFileName] = useState("");
   const [saving, setSaving] = useState(false);
+  const [generatingSummary, setGeneratingSummary] = useState(false);
+  const [summaryError, setSummaryError] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -73,6 +75,25 @@ export default function ClientReports({ clientId, canManage }) {
       alert(err.message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Escreve o texto de "Observações" automaticamente a partir dos números já
+  // preenchidos no formulário — o gestor sempre revisa/edita antes de salvar
+  // (não salva sozinho), só poupa o trabalho de redigir do zero todo mês.
+  async function generateSummary() {
+    setGeneratingSummary(true);
+    setSummaryError("");
+    try {
+      const res = await api("/api/ai/monthly-report-summary", {
+        method: "POST",
+        body: { clientId, month: form.month, spend: form.spend, impressions: form.impressions, clicks: form.clicks, leadsCount: form.leadsCount, fechamentos: form.fechamentos, revenue: form.revenue },
+      });
+      setForm((f) => ({ ...f, notes: res.text }));
+    } catch (err) {
+      setSummaryError(err.message);
+    } finally {
+      setGeneratingSummary(false);
     }
   }
 
@@ -119,12 +140,20 @@ export default function ClientReports({ clientId, canManage }) {
               <input type="file" accept=".csv,.txt" className="hidden" onChange={handleCsvPick} />
             </label>
           </div>
-          <input placeholder="Observações (opcional)" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
-            className="w-full px-2.5 py-1.5 text-xs rounded-md border border-border bg-surface2 text-ink" />
+          <div className="flex gap-1.5">
+            <input placeholder="Observações (opcional)" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              className="flex-1 px-2.5 py-1.5 text-xs rounded-md border border-border bg-surface2 text-ink" />
+            <button type="button" onClick={generateSummary} disabled={generatingSummary || !form.month}
+              title="Escrever automaticamente com IA a partir dos números preenchidos"
+              className="shrink-0 text-xs font-medium bg-surface2 border border-border text-inksoft hover:text-accent hover:border-accent transition px-2.5 py-1.5 rounded-md disabled:opacity-60">
+              {generatingSummary ? "Escrevendo…" : "✨ Gerar com IA"}
+            </button>
+          </div>
+          {summaryError && <p className="text-[10.5px] text-danger">{summaryError}</p>}
           <button disabled={saving} className="bg-accent text-white text-xs font-medium px-3 py-1.5 rounded-md hover:bg-accentink disabled:opacity-60">
             {saving ? "Salvando…" : "Gerar relatório do mês"}
           </button>
-          <p className="text-[10.5px] text-inkfaint">Preencha os campos manualmente e/ou importe um CSV exportado do Gerenciador de Anúncios — campos preenchidos manualmente têm prioridade sobre o CSV.</p>
+          <p className="text-[10.5px] text-inkfaint">Preencha os campos manualmente e/ou importe um CSV exportado do Gerenciador de Anúncios — campos preenchidos manualmente têm prioridade sobre o CSV. O botão "Gerar com IA" escreve a observação pra você a partir desses números; revise antes de salvar.</p>
         </form>
       )}
 

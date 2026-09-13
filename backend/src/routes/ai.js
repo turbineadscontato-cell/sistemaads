@@ -2,6 +2,7 @@ const express = require("express");
 const prisma = require("../prisma");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const XLSX = require("xlsx");
+const { callClaude, callClaudeRaw, notConfiguredError } = require("../lib/claude");
 
 const router = express.Router();
 router.use(requireAuth);
@@ -10,7 +11,6 @@ router.use(requireAuth);
 // their own "client_marketing" tools, never the internal staff assistants.
 router.use(requireRole("SOCIO", "GESTOR", "CLIENTE"));
 
-const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5-20250929";
 const MAX_IMAGES = 3;
 const MAX_IMAGE_B64_CHARS = 6_000_000; // ~4.5MB decoded, well under the API's per-image limit
 const MAX_SPREADSHEET_B64_CHARS = 8_000_000; // ~6MB decoded
@@ -67,43 +67,6 @@ Sazonalidade e datas relevantes para content ideas: ${AWARENESS_DATES_REFERENCE}
 
 Responda sempre em português do Brasil, em tom próximo e prático — como um consultor experiente que quer genuinamente ajudar esse profissional a crescer, sem jargão técnico desnecessário.`,
 };
-
-function notConfiguredError() {
-  const err = new Error(
-    "Assistente de IA ainda não configurado. Peça ao sócio para adicionar a variável ANTHROPIC_API_KEY nas variáveis de ambiente do backend (Railway)."
-  );
-  err.notConfigured = true;
-  return err;
-}
-
-// Chamada crua à API da Anthropic — devolve a resposta inteira (não só o
-// texto), porque o loop de ferramentas (runWithTools, abaixo) precisa
-// inspecionar stop_reason e os content blocks de tool_use.
-async function callClaude({ system, messages, tools, maxTokens = 1200 }) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw notConfiguredError();
-  const body = { model: MODEL, max_tokens: maxTokens, system, messages };
-  if (tools && tools.length) body.tools = tools;
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify(body),
-  });
-  const data = await r.json().catch(() => null);
-  if (!r.ok) {
-    throw new Error(data?.error?.message || "Erro ao consultar a IA.");
-  }
-  return data;
-}
-
-async function callClaudeRaw({ system, messages, maxTokens = 1200 }) {
-  const data = await callClaude({ system, messages, maxTokens });
-  return (data?.content || []).map((c) => c.text || "").join("");
-}
 
 // Ferramentas que os assistentes internos (Estratégia de Tráfego, Nicho
 // Terapia) podem chamar pra consultar dados REAIS do sistema em vez de só
@@ -504,6 +467,61 @@ Gere entre 6 e 10 ideias distribuídas ao longo do mês (datas dentro do mês pe
     } else {
       res.json({ ideas: [], raw });
     }
+  } catch (err) {
+    res.status(err.notConfigured ? 501 : 502).json({ error: err.message });
+  }
+});
+
+// Escreve o resumo/observação de um relatório mensal (MonthlyReport) a
+// partir dos números já preenchidos no formulário — o gestor revisa/edita o
+// texto antes de salvar, ele não é salvo automaticamente por aqui (ver
+// routes/monthlyReports.js, que continua recebendo "notes" como texto livre
+// igual antes). Não fica restrito a SOCIO/GESTOR via requireImageStaff
+// porque monthlyReports.js já deixa ambos criarem relatório; CLIENTE nunca
+// chama essa rota pelo frontend, mas o requireRole do topo do arquivo já
+// cobre esse acesso mesmo assim.
+router.post("/monthly-report-summary", async (req, res) => {
+  if (req.user.role === "CLIENTE") return res.status(403).json({ error: "Sem acesso." });
+  const { clientId, month, spend, impressions, clicks, leadsCount, fechamentos, revenue } = req.body || {};
+  if (!month) return res.status(400).json({ error: "Preencha o mês antes de gerar o resumo." });
+
+  let client = null;
+  if (clientId) {
+    client = await findClientForUser(req, clientId);
+    if (!client) return res.status(404).json({ error: "Cliente não encontrado ou sem acesso." });
+  }
+
+  const num = (v) => (v !== undefined && v !== null && v !== "" ? Number(v) : null);
+  const spendN = num(spend), leadsN = num(leadsCount), fechN = num(fechamentos), revN = num(revenue);
+  const cpl = spendN != null && leadsN ? spendN / leadsN : null;
+  const taxaFechamento = leadsN ? ((fechN || 0) / leadsN) * 100 : null;
+  const roi = spendN ? (((revN || 0) - spendN) / spendN) * 100 : null;
+
+  const system = `Você é quem escreve, em nome da agência de tráfego pago, o resumo de performance mensal que o CLIENTE vai ler diretamente no portal dele (não é uso interno). Escreva em português do Brasil, em tom próximo, confiante e honesto — nunca inflado nem genérico. Curto: 2 a 4 frases em um único parágrafo, sem título, sem saudação, sem tópicos.
+
+Regras: comece pelo que mais importa pro cliente (resultado prático: leads e fechamentos, não impressões). Se o resultado do mês foi bom, comemore com naturalidade, sem exagero. Se foi fraco (poucos leads, CPL alto, poucos fechamentos), seja honesto mas construtivo, e termine com o que a equipe já está ajustando/planeja pra melhorar. Nunca invente números — use só os que foram informados; se algum dado importante não veio, simplesmente não mencione.`;
+
+  const linhas = [
+    client ? `Cliente: ${client.name}${client.niche ? ` (nicho: ${client.niche})` : ""}` : null,
+    `Mês de referência: ${month}`,
+    spendN != null ? `Verba investida: R$ ${spendN.toFixed(2)}` : null,
+    impressions ? `Impressões: ${impressions}` : null,
+    clicks ? `Cliques: ${clicks}` : null,
+    leadsN != null ? `Leads gerados: ${leadsN}` : null,
+    fechN != null ? `Fechamentos (vendas/pacientes fechados): ${fechN}` : null,
+    revN != null ? `Faturamento gerado atribuído a essa campanha: R$ ${revN.toFixed(2)}` : null,
+    cpl != null ? `Custo por lead: R$ ${cpl.toFixed(2)}` : null,
+    taxaFechamento != null ? `Taxa de fechamento: ${taxaFechamento.toFixed(1)}%` : null,
+    roi != null ? `ROI da campanha: ${roi.toFixed(0)}%` : null,
+  ].filter(Boolean);
+
+  if (linhas.length <= 2) {
+    return res.status(400).json({ error: "Preencha ao menos verba, leads ou fechamentos antes de gerar o resumo." });
+  }
+
+  try {
+    const text = await callClaudeRaw({ system, messages: [{ role: "user", content: linhas.join("\n") }], maxTokens: 400 });
+    res.json({ text: text.trim() });
   } catch (err) {
     res.status(err.notConfigured ? 501 : 502).json({ error: err.message });
   }

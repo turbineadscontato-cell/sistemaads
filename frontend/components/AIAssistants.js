@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { renderMarkdownLite } from "../lib/markdownLite";
+import AiSiteBuilder from "./AiSiteBuilder";
 
 const MODES = [
   { key: "traffic", label: "Estratégia de Tráfego", blurb: "Diagnóstico de campanhas, estrutura de contas e otimização — para gestores." },
@@ -95,7 +96,7 @@ function resizeReferenceImage(file) {
 }
 
 export default function AIAssistants() {
-  const [view, setView] = useState("chat"); // "chat" | "imagem"
+  const [view, setView] = useState("chat"); // "chat" | "imagem" | "site"
   const [mode, setMode] = useState("traffic");
   const [threads, setThreads] = useState({ therapy: null, traffic: null }); // null = ainda não carregado
   const [input, setInput] = useState("");
@@ -324,7 +325,7 @@ export default function AIAssistants() {
   const revealingHere = reveal && reveal.mode === mode;
 
   return (
-    <section className="space-y-4 max-w-3xl">
+    <section className={`space-y-4 ${view === "site" ? "max-w-5xl" : "max-w-3xl"}`}>
       <div className="flex gap-1 bg-surface border border-border rounded-lg p-1 w-fit">
         <button onClick={() => setView("chat")}
           className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${view === "chat" ? "bg-accent text-white" : "text-inksoft hover:text-ink"}`}>
@@ -334,7 +335,13 @@ export default function AIAssistants() {
           className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${view === "imagem" ? "bg-accent text-white" : "text-inksoft hover:text-ink"}`}>
           🎨 Gerar imagem
         </button>
+        <button onClick={() => setView("site")}
+          className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${view === "site" ? "bg-accent text-white" : "text-inksoft hover:text-ink"}`}>
+          🌐 Criar site
+        </button>
       </div>
+
+      {view === "site" && <AiSiteBuilder />}
 
       {view === "chat" && (
         <>

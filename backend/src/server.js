@@ -15,6 +15,9 @@ const fileRoutes = require("./routes/files");
 const monthlyReportRoutes = require("./routes/monthlyReports");
 const clientLeadRoutes = require("./routes/clientLeads");
 const aiRoutes = require("./routes/ai");
+const aiSitesRoutes = require("./routes/aiSites");
+const pushRoutes = require("./routes/push");
+const { startNotificationJobs } = require("./jobs/notifications");
 const patientRoutes = require("./routes/patients");
 const contentPostRoutes = require("./routes/contentPosts");
 const metaRoutes = require("./routes/meta");
@@ -56,6 +59,8 @@ app.use("/api/files", fileRoutes);
 app.use("/api/monthly-reports", monthlyReportRoutes);
 app.use("/api/client-leads", clientLeadRoutes);
 app.use("/api/ai", aiRoutes);
+app.use("/api/ai-sites", aiSitesRoutes);
+app.use("/api/push", pushRoutes);
 app.use("/api/patients", patientRoutes);
 app.use("/api/content-posts", contentPostRoutes);
 app.use("/api/meta", metaRoutes);
@@ -72,4 +77,10 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`TurbinaADS backend rodando na porta ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`TurbinaADS backend rodando na porta ${PORT}`);
+  // Notificações push (avisos de pagamento vencendo/atrasado, reunião em
+  // breve, sessão de paciente hoje/amanhã) — não faz nada se as chaves VAPID
+  // não estiverem configuradas nas variáveis de ambiente.
+  startNotificationJobs();
+});
