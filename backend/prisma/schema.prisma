@@ -641,6 +641,11 @@ model AiSiteProject {
   createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Cascade)
 
   messages AiSiteMessage[]
+  // Fotos enviadas pelo usuário nesse projeto (13/09/2026) — guardadas uma
+  // vez só aqui (não duplicadas a cada HTML gerado) e referenciadas dentro
+  // do HTML por um token ({{FOTO:foto-1}}), trocado pela foto de verdade só
+  // na hora de mostrar/baixar a página. Ver routes/aiSites.js.
+  images AiSiteImage[]
 
   @@index([createdById, updatedAt])
 }
@@ -662,7 +667,38 @@ model AiSiteMessage {
   projectId String
   project   AiSiteProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
+  // Fotos anexadas junto com ESSA mensagem especificamente — só pra exibir
+  // "📎 N foto(s)" na bolha do chat no histórico (as fotos em si continuam
+  // disponíveis pro projeto inteiro, não só nessa mensagem).
+  images AiSiteImage[]
+
   @@index([projectId, createdAt])
+}
+
+// Foto enviada pelo usuário num projeto do construtor de sites com IA
+// (13/09/2026) — guardada uma única vez por projeto (nunca duplicada a cada
+// HTML gerado de novo) e referenciada dentro do HTML pela IA através de um
+// token curto (ex: {{FOTO:foto-1}}), que o backend troca pela foto de
+// verdade (data URL) só na hora de servir a prévia/download — assim o
+// histórico de mensagens/HTML reenviado pra IA a cada turno fica pequeno
+// (só o token, nunca o base64 inteiro da foto).
+model AiSiteImage {
+  id         String   @id @default(cuid())
+  token      String // ex: "foto-1", único dentro do projeto
+  name       String?
+  mimeType   String
+  dataBase64 String   @db.Text
+  createdAt  DateTime @default(now())
+
+  projectId String
+  project   AiSiteProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  messageId String?
+  message   AiSiteMessage? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@unique([projectId, token])
+  @@index([projectId])
+  @@index([messageId])
 }
 
 // ==========================================================================
