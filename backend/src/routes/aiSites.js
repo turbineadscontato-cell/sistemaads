@@ -27,7 +27,7 @@ const SYSTEM_PROMPT = `Você é um construtor de sites, usado INTERNAMENTE pela 
 
 MUITO IMPORTANTE — não trave pedindo informação: assim que souber o nicho/negócio e o objetivo básico da página (ex: "landing page pra psicóloga infantil, agendamento via WhatsApp"), gere a primeira versão completa JÁ NESSA RESPOSTA, fazendo escolhas de design (paleta, estilo, textos, seções) por conta própria, do jeito que você faria numa conversa direta comigo — nunca peça uma lista de informações antes de mostrar algo. Só faça uma pergunta objetiva, sem gerar HTML, se o pedido for tão vago que não dá nem pra começar (ex: só "me faz um site"). Depois da primeira versão, o gestor ajusta pedindo mudanças — é assim que o processo funciona, igual uma conversa normal de revisão.
 
-FOTOS: quando a mensagem do usuário incluir uma lista de "Fotos disponíveis nesse projeto", você TEM que usar essas fotos nas tags <img> da página, usando exatamente o token indicado dentro do atributo src, assim: <img src="{{FOTO:foto-1}}" alt="descrição real da foto">. Nunca invente outro token, nunca escreva a foto errada pro lugar errado (ex: não bote uma foto de fachada como se fosse retrato de pessoa) — você pode VER cada foto anexada na conversa, use isso pra decidir onde cada uma fica melhor (hero, seção "sobre", galeria etc). NUNCA use um link de imagem externo (unsplash, placeholder.com, etc) nem invente um src que não seja um token de foto real — se a página pede uma imagem e não tem nenhuma foto disponível ainda, resolva com design (gradiente, ícone, formas), nunca com uma URL inventada.
+FOTOS: quando a mensagem do usuário incluir uma lista de "Fotos disponíveis nesse projeto", você TEM que usar essas fotos nas tags <img> da página, usando exatamente o token indicado dentro do atributo src, assim: <img src="{{FOTO:foto-1}}" alt="descrição real da foto">. Essa lista, sempre que aparecer, é a fonte de verdade ATUAL — use SÓ os tokens que estão nela nessa mensagem, mesmo que uma versão anterior do HTML (reenviada como contexto) mencione outro número de foto; nunca reaproveite de memória um token de uma resposta antiga sem conferir se ele ainda está na lista atual. Nunca invente outro token, nunca escreva a foto errada pro lugar errado (ex: não bote uma foto de fachada como se fosse retrato de pessoa) — você pode VER cada foto anexada na conversa, use isso pra decidir onde cada uma fica melhor (hero, seção "sobre", galeria etc). NUNCA use um link de imagem externo (unsplash, placeholder.com, etc) nem invente um src que não seja um token de foto real — se a página pede uma imagem e não tem nenhuma foto disponível ainda, resolva com design (gradiente, ícone, formas), nunca com uma URL inventada.
 
 VÍDEOS (ex: depoimento em vídeo) — quando o usuário mandar um LINK de vídeo (post ou reel do Instagram, YouTube, TikTok), incorpore um player de verdade, nunca finja que é vídeo usando uma foto/print:
 - Instagram (post ou reel): use exatamente esse embed oficial, só trocando o link pelo que foi enviado:
@@ -65,11 +65,19 @@ function stripHtmlBlock(text) {
 // Troca cada {{FOTO:token}} pela foto de verdade (data URL) — feito só na
 // hora de SERVIR o HTML (prévia/download), nunca antes de guardar no banco
 // nem antes de reenviar como contexto pra IA (ver buildSiteApiMessages).
+// Placeholder neutro (cinza-claro, sem texto/ícone) pra quando a IA referencia
+// um token que não existe de verdade (ex: reaproveitou um número de foto de
+// uma versão anterior da conversa) — evita um ícone de "imagem quebrada"
+// piscando na tela, que é exatamente a cara de "bug" pro usuário.
+const MISSING_FOTO_PLACEHOLDER =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="800"><rect width="100%" height="100%" fill="#e5e2dc"/></svg>');
+
 function substituteFotos(html, images) {
   if (!html) return html;
   return html.replace(/\{\{FOTO:([a-zA-Z0-9_-]+)\}\}/g, (match, token) => {
     const img = images.find((i) => i.token === token);
-    return img ? `data:${img.mimeType};base64,${img.dataBase64}` : "";
+    return img ? `data:${img.mimeType};base64,${img.dataBase64}` : MISSING_FOTO_PLACEHOLDER;
   });
 }
 
