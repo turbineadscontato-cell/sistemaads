@@ -17,6 +17,14 @@ const MAX_TOKENS = 8000; // página inteira em HTML/CSS/JS pode ser longa
 // (express.json em server.js) somando todas as fotos de uma mensagem só.
 const MAX_IMAGES_PER_MESSAGE = 4;
 const MAX_IMAGE_BASE64_LENGTH = 1_600_000; // ~1.2MB de imagem já redimensionada no navegador
+// Vídeo de depoimento enviado como ARQUIVO (14/09/2026) — usado quando não
+// existe link de post/reel pra incorporar (ex: só existe como Story, que
+// nunca pode ser embedado — ver instrução de STORY no SYSTEM_PROMPT). Um só
+// por mensagem (é raro precisar de mais de um depoimento em vídeo de uma
+// vez) e limite de tamanho bem maior que foto — combinado com a sócia
+// (~20MB de vídeo bruto). Body limit do server.js foi ajustado junto (35mb).
+const MAX_VIDEOS_PER_MESSAGE = 1;
+const MAX_VIDEO_BASE64_LENGTH = 28_000_000; // ~20MB de vídeo bruto já em base64
 
 // Instruído pra SEMPRE tentar entregar uma primeira versão de cara (mesmo
 // que com escolhas próprias de cor/estilo), do jeito que a gente faz aqui no
@@ -31,15 +39,19 @@ EDIÇÃO DE UM SITE QUE JÁ EXISTE — MUITO IMPORTANTE: se a conversa já tem u
 
 FOTOS: quando a mensagem do usuário incluir uma lista de "Fotos disponíveis nesse projeto", você TEM que usar essas fotos nas tags <img> da página, usando exatamente o token indicado dentro do atributo src, assim: <img src="{{FOTO:foto-1}}" alt="descrição real da foto">. Essa lista, sempre que aparecer, é a fonte de verdade ATUAL — use SÓ os tokens que estão nela nessa mensagem, mesmo que uma versão anterior do HTML (reenviada como contexto) mencione outro número de foto; nunca reaproveite de memória um token de uma resposta antiga sem conferir se ele ainda está na lista atual. Nunca invente outro token, nunca escreva a foto errada pro lugar errado (ex: não bote uma foto de fachada como se fosse retrato de pessoa) — você pode VER cada foto anexada na conversa, use isso pra decidir onde cada uma fica melhor (hero, seção "sobre", galeria etc). NUNCA use um link de imagem externo (unsplash, placeholder.com, etc) nem invente um src que não seja um token de foto real — se a página pede uma imagem e não tem nenhuma foto disponível ainda, resolva com design (gradiente, ícone, formas), nunca com uma URL inventada.
 
-VÍDEOS (ex: depoimento em vídeo) — quando o usuário mandar um LINK de vídeo (post ou reel do Instagram, YouTube, TikTok), incorpore um player de verdade, nunca finja que é vídeo usando uma foto/print:
+VÍDEOS (ex: depoimento em vídeo) — existem DUAS formas de receber um vídeo, nunca finja que é vídeo usando uma foto/print:
+- ARQUIVO DE VÍDEO enviado direto (quando a mensagem do usuário incluir uma lista de "Vídeos disponíveis nesse projeto"): use o token exatamente como veio, dentro de um player de vídeo de verdade, assim:
+  <video controls playsinline style="width:100%;max-width:560px;display:block;margin:0 auto;border-radius:8px;"><source src="{{VIDEO:video-1}}"></video>
+  Nunca invente outro token, nunca escreva "type" no <source> (o navegador reconhece sozinho pelo conteúdo). Essa lista, igual a de fotos, é a fonte de verdade ATUAL — nunca reaproveite de memória um token de vídeo de uma resposta antiga sem conferir se ele ainda está na lista atual dessa mensagem.
+- LINK de vídeo (post ou reel do Instagram, YouTube, TikTok) — quando o usuário mandar um link em vez de arquivo, incorpore um player de verdade:
 - ATENÇÃO — link de STORY do Instagram (contém "/s/" ou "story_media_id=" ou "stories/" na URL) NUNCA pode virar um player embutido — o Instagram não permite embed de story em nenhum site de fora (é uma limitação da própria plataforma, não algo que dê pra contornar com código: story é conteúdo privado/de 24h, diferente de post e reel, que são públicos e permanentes). Se o link enviado for desse tipo, NÃO tente gerar nenhum embed (nem tente de novo se o usuário reenviar o mesmo link story) — em vez disso, no seu comentário curto, explique isso claramente e peça o link de um POST ou REEL (esses sim têm embed oficial) ou o arquivo de vídeo em si.
 - Instagram (post ou reel — link contém "/p/" ou "/reel/"): use exatamente esse embed oficial, só trocando o link pelo que foi enviado:
   <blockquote class="instagram-media" data-instgrm-permalink="LINK_COMPLETO_AQUI" style="max-width:540px;margin:0 auto;"></blockquote><script async src="//www.instagram.com/embed.js"></script>
 - YouTube: extraia o ID do vídeo do link (a parte depois de "watch?v=" ou depois de "youtu.be/") e use:
   <iframe style="width:100%;aspect-ratio:16/9;border:0;" src="https://www.youtube.com/embed/ID_DO_VIDEO" title="Depoimento em vídeo" allowfullscreen></iframe>
 - Se o link for de outra plataforma (TikTok, Vimeo) e você não tiver certeza de como montar o embed certo, NÃO invente um player quebrado — em vez disso, monte um cartão/botão elegante "▶ Ver depoimento" que abre o link original numa aba nova (target="_blank"), combinando com o resto do design.
-- NUNCA chame uma foto/print de "vídeo". Se o usuário só anexou uma imagem (print/screenshot) e não mandou nenhum link de vídeo de verdade, use essa imagem como uma FOTO normal (token {{FOTO:x}}) e diga claramente no seu comentário que é uma imagem estática — só vira um player de vídeo de verdade quando vier o link do post/reel original.
-- Aviso técnico pra você (não precisa repetir isso pro usuário toda hora): embeds de Instagram/TikTok dependem de carregar um script externo, então às vezes não renderizam na prévia dentro do painel (que roda numa aba restrita) mesmo estando corretos — funcionam normalmente no site já publicado de verdade.
+- NUNCA chame uma foto/print de "vídeo". Se o usuário só anexou uma imagem (print/screenshot) e não mandou nenhum link de vídeo de verdade nem arquivo de vídeo, use essa imagem como uma FOTO normal (token {{FOTO:x}}) e diga claramente no seu comentário que é uma imagem estática.
+- Aviso técnico pra você (não precisa repetir isso pro usuário toda hora): o player de ARQUIVO de vídeo (token {{VIDEO:x}}) funciona normalmente na prévia dentro do painel, igual foto. Só os embeds por LINK (Instagram/TikTok) que dependem de script externo é que às vezes não renderizam na prévia (roda numa aba restrita) mesmo estando corretos — esses só funcionam garantido no site já publicado de verdade.
 
 PADRÃO DE QUALIDADE VISUAL — o mesmo cuidado de design usado numa conversa direta pra criar site, nunca o resultado genérico de "gerador automático de landing page":
 - Baseie cada escolha no negócio/pessoa REAL descrito na conversa — nunca um layout que serviria igual pra qualquer nicho. Textos específicos e reais (nunca "Lorem ipsum", nunca frase vazia tipo "Bem-vindo ao nosso site" ou "Transforme sua vida hoje").
@@ -84,16 +96,31 @@ function substituteFotos(html, images) {
   });
 }
 
-// Busca o HTML mais recente do projeto (ainda com token, {{FOTO:x}}) e todas
-// as fotos disponíveis — usado tanto na tela do chat (GET /:id) quanto na
-// publicação (POST /:id/publish), pra não duplicar a mesma consulta.
-async function getRawHtmlAndImages(projectId) {
-  const [rows, images] = await Promise.all([
+// Mesmo princípio da substituição de fotos, pra vídeo enviado como arquivo
+// (14/09/2026) — token {{VIDEO:x}}, trocado pelo vídeo de verdade (data URL)
+// só na hora de servir/publicar. Token não encontrado vira string vazia (o
+// <video> fica sem fonte — um player vazio é bem menos "bugado" na tela do
+// que um ícone de imagem quebrada, então não precisa de placeholder aqui).
+function substituteVideos(html, videos) {
+  if (!html) return html;
+  return html.replace(/\{\{VIDEO:([a-zA-Z0-9_-]+)\}\}/g, (match, token) => {
+    const vid = videos.find((v) => v.token === token);
+    return vid ? `data:${vid.mimeType};base64,${vid.dataBase64}` : "";
+  });
+}
+
+// Busca o HTML mais recente do projeto (ainda com token, {{FOTO:x}} /
+// {{VIDEO:x}}) e todas as fotos/vídeos disponíveis — usado tanto na tela do
+// chat (GET /:id) quanto na publicação (POST /:id/publish), pra não
+// duplicar a mesma consulta.
+async function getRawHtmlAndMedia(projectId) {
+  const [rows, images, videos] = await Promise.all([
     prisma.aiSiteMessage.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 40, select: { htmlSnapshot: true } }),
     prisma.aiSiteImage.findMany({ where: { projectId } }),
+    prisma.aiSiteVideo.findMany({ where: { projectId } }),
   ]);
   const rawHtml = rows.find((r) => r.htmlSnapshot)?.htmlSnapshot || null;
-  return { rawHtml, images };
+  return { rawHtml, images, videos };
 }
 
 async function assertProjectAccess(req, id) {
@@ -167,9 +194,10 @@ router.get("/:id", async (req, res) => {
   const project = await assertProjectAccess(req, req.params.id);
   if (!project) return res.status(404).json({ error: "Projeto não encontrado ou sem acesso." });
 
-  const [rows, images] = await Promise.all([
+  const [rows, images, videos] = await Promise.all([
     prisma.aiSiteMessage.findMany({ where: { projectId: project.id }, orderBy: { createdAt: "asc" } }),
     prisma.aiSiteImage.findMany({ where: { projectId: project.id }, select: { id: true, token: true, name: true, messageId: true } }),
+    prisma.aiSiteVideo.findMany({ where: { projectId: project.id }, select: { id: true, token: true, name: true, messageId: true } }),
   ]);
 
   const messages = rows.map((r) => ({
@@ -178,6 +206,7 @@ router.get("/:id", async (req, res) => {
     text: r.role === "assistant" ? stripHtmlBlock(r.content) || "✅ Site atualizado — veja a prévia." : r.content,
     hasHtml: !!r.htmlSnapshot,
     imageCount: images.filter((img) => img.messageId === r.id).length,
+    videoCount: videos.filter((v) => v.messageId === r.id).length,
     createdAt: r.createdAt,
   }));
   const rawHtml = [...rows].reverse().find((r) => r.htmlSnapshot)?.htmlSnapshot || null;
@@ -185,8 +214,9 @@ router.get("/:id", async (req, res) => {
   res.json({
     project,
     messages,
-    currentHtml: substituteFotos(rawHtml, images),
+    currentHtml: substituteVideos(substituteFotos(rawHtml, images), videos),
     photoCount: images.length,
+    videoCount: videos.length,
   });
 });
 
@@ -208,9 +238,9 @@ router.post("/:id/publish", async (req, res) => {
     return res.status(501).json({ error: "Publicação ainda não configurada — falta a chave da Netlify (NETLIFY_TOKEN) nas variáveis de ambiente do backend." });
   }
 
-  const { rawHtml, images } = await getRawHtmlAndImages(project.id);
+  const { rawHtml, images, videos } = await getRawHtmlAndMedia(project.id);
   if (!rawHtml) return res.status(400).json({ error: "Ainda não há nenhum site gerado nesse projeto pra publicar." });
-  const html = substituteFotos(rawHtml, images);
+  const html = substituteVideos(substituteFotos(rawHtml, images), videos);
 
   try {
     const { siteId, url } = await publishHtml({ existingSiteId: project.netlifySiteId, name: project.name, html });
@@ -225,7 +255,7 @@ router.post("/:id/messages", async (req, res) => {
   const project = await assertProjectAccess(req, req.params.id);
   if (!project) return res.status(404).json({ error: "Projeto não encontrado ou sem acesso." });
 
-  const { message, images: newImagesInput } = req.body || {};
+  const { message, images: newImagesInput, videos: newVideosInput } = req.body || {};
   if (!message || !String(message).trim()) return res.status(400).json({ error: "Escreva uma mensagem." });
   const userText = String(message).trim();
 
@@ -239,6 +269,19 @@ router.post("/:id/messages", async (req, res) => {
     }
     if (img.dataBase64.length > MAX_IMAGE_BASE64_LENGTH) {
       return res.status(400).json({ error: "Uma das fotos ficou grande demais mesmo depois de redimensionada — tente outra." });
+    }
+  }
+
+  const newVideos = Array.isArray(newVideosInput) ? newVideosInput.slice(0, MAX_VIDEOS_PER_MESSAGE) : [];
+  for (const vid of newVideos) {
+    if (!vid || typeof vid.dataBase64 !== "string" || !vid.dataBase64) {
+      return res.status(400).json({ error: "Vídeo inválido no anexo." });
+    }
+    if (!vid.mimeType || !String(vid.mimeType).startsWith("video/")) {
+      return res.status(400).json({ error: "Só é possível anexar arquivos de vídeo." });
+    }
+    if (vid.dataBase64.length > MAX_VIDEO_BASE64_LENGTH) {
+      return res.status(400).json({ error: "O vídeo ficou grande demais (máximo ~20MB) — tente comprimir ou cortar antes de anexar." });
     }
   }
 
@@ -268,6 +311,27 @@ router.post("/:id/messages", async (req, res) => {
       createdImages.push(row);
     }
 
+    // Mesmo princípio das fotos, mas em token separado ("video-N") — nunca
+    // mandado como conteúdo de visão pra API da Claude (ela não aceita
+    // vídeo nesse formato), só descrito por texto na listagem abaixo.
+    const existingVideoCount = await prisma.aiSiteVideo.count({ where: { projectId: project.id } });
+    const createdVideos = [];
+    for (let i = 0; i < newVideos.length; i++) {
+      const vid = newVideos[i];
+      const token = `video-${existingVideoCount + i + 1}`;
+      const row = await prisma.aiSiteVideo.create({
+        data: {
+          projectId: project.id,
+          messageId: userRow.id,
+          token,
+          name: vid.name ? String(vid.name).slice(0, 200) : null,
+          mimeType: vid.mimeType,
+          dataBase64: vid.dataBase64,
+        },
+      });
+      createdVideos.push(row);
+    }
+
     const priorRows = await prisma.aiSiteMessage.findMany({
       where: { projectId: project.id, id: { not: userRow.id } },
       orderBy: { createdAt: "desc" },
@@ -280,11 +344,16 @@ router.post("/:id/messages", async (req, res) => {
     // dessa mensagem) — garante que a IA saiba dos tokens mesmo em edições
     // futuras sem precisar re-enviar/re-ver a foto de novo.
     const allImages = await prisma.aiSiteImage.findMany({ where: { projectId: project.id }, orderBy: { createdAt: "asc" } });
+    const allVideos = await prisma.aiSiteVideo.findMany({ where: { projectId: project.id }, orderBy: { createdAt: "asc" } });
 
     let userContent = userText;
     if (allImages.length) {
       const listagem = allImages.map((img) => `${img.token} (${img.name || "sem nome"})`).join(", ");
-      userContent = `${userText}\n\n[Fotos disponíveis nesse projeto — use exatamente esse token dentro de src="{{FOTO:token}}" numa tag <img>, nunca invente outro token nem use URL externa: ${listagem}]`;
+      userContent = `${userContent}\n\n[Fotos disponíveis nesse projeto — use exatamente esse token dentro de src="{{FOTO:token}}" numa tag <img>, nunca invente outro token nem use URL externa: ${listagem}]`;
+    }
+    if (allVideos.length) {
+      const listagemVideos = allVideos.map((v) => `${v.token} (${v.name || "sem nome"})`).join(", ");
+      userContent = `${userContent}\n\n[Vídeos disponíveis nesse projeto (arquivo enviado direto, não link) — use exatamente esse token dentro de <source src="{{VIDEO:token}}"> num player <video>, nunca invente outro token: ${listagemVideos}]`;
     }
     // As fotos ANEXADAS NESSA MENSAGEM (não as antigas) viram blocos de
     // imagem de verdade, pra IA poder efetivamente ver o conteúdo de cada
@@ -307,7 +376,7 @@ router.post("/:id/messages", async (req, res) => {
 
     res.json({
       text: stripHtmlBlock(raw) || "✅ Site atualizado — veja a prévia.",
-      htmlSnapshot: substituteFotos(html, allImages),
+      htmlSnapshot: substituteVideos(substituteFotos(html, allImages), allVideos),
     });
   } catch (err) {
     res.status(err.notConfigured ? 501 : 502).json({ error: err.message });

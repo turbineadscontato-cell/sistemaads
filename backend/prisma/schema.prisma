@@ -646,6 +646,12 @@ model AiSiteProject {
   // do HTML por um token ({{FOTO:foto-1}}), trocado pela foto de verdade só
   // na hora de mostrar/baixar a página. Ver routes/aiSites.js.
   images AiSiteImage[]
+  // Vídeos enviados como ARQUIVO pelo usuário (14/09/2026) — mesmo princípio
+  // das fotos (token {{VIDEO:video-1}}, trocado pelo vídeo de verdade só na
+  // hora de servir/publicar), usado quando não existe link de post/reel pra
+  // incorporar (ex: depoimento que só existe como Story ou arquivo solto no
+  // celular). Limite de tamanho bem maior que foto — ver MAX_VIDEO_BASE64_LENGTH.
+  videos AiSiteVideo[]
 
   // Publicação direta na Netlify (14/09/2026) — netlifySiteId é o "site" lá
   // dentro (criado uma vez só, reaproveitado em toda publicação seguinte do
@@ -679,6 +685,9 @@ model AiSiteMessage {
   // "📎 N foto(s)" na bolha do chat no histórico (as fotos em si continuam
   // disponíveis pro projeto inteiro, não só nessa mensagem).
   images AiSiteImage[]
+  // Vídeos anexados junto com ESSA mensagem especificamente — mesmo
+  // princípio das fotos acima, só pra exibir "🎬 N vídeo(s)" no histórico.
+  videos AiSiteVideo[]
 
   @@index([projectId, createdAt])
 }
@@ -693,6 +702,32 @@ model AiSiteMessage {
 model AiSiteImage {
   id         String   @id @default(cuid())
   token      String // ex: "foto-1", único dentro do projeto
+  name       String?
+  mimeType   String
+  dataBase64 String   @db.Text
+  createdAt  DateTime @default(now())
+
+  projectId String
+  project   AiSiteProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  messageId String?
+  message   AiSiteMessage? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@unique([projectId, token])
+  @@index([projectId])
+  @@index([messageId])
+}
+
+// Vídeo enviado como ARQUIVO (não link) pelo usuário num projeto do
+// construtor de sites com IA (14/09/2026) — usado quando o depoimento não
+// tem um link de post/reel pra incorporar (ex: só existe como Story do
+// Instagram, que não pode ser embedado de jeito nenhum — ver SYSTEM_PROMPT).
+// Mesmo princípio de token da AiSiteImage ({{VIDEO:video-1}}), mas nunca
+// mandado pra API da Claude como conteúdo de visão (a API não aceita vídeo
+// nesse formato) — só descrito por texto na lista "Vídeos disponíveis".
+model AiSiteVideo {
+  id         String   @id @default(cuid())
+  token      String // ex: "video-1", único dentro do projeto
   name       String?
   mimeType   String
   dataBase64 String   @db.Text
