@@ -14,6 +14,45 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+const MAX_DIM = 1600; // fotos de site precisam de mais resolução que um avatar
+const MAX_IMAGES = 4; // limite por mensagem — mantém o total dentro do limite de tamanho do backend
+
+// Redimensiona a foto no navegador antes de anexar — mesmo princípio já
+// usado em AvatarButton.js/AIAssistants.js (canvas + toDataURL), só que com
+// um tamanho máximo maior porque essas fotos viram imagem de destaque no
+// site (hero, seção "sobre" etc), não um avatar pequeno.
+function resizeSitePhoto(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Não foi possível ler a imagem."));
+    reader.onload = () => {
+      const img = new window.Image();
+      img.onerror = () => reject(new Error("Arquivo de imagem inválido."));
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > height && width > MAX_DIM) {
+          height = Math.round(height * (MAX_DIM / width));
+          width = MAX_DIM;
+        } else if (height >= width && height > MAX_DIM) {
+          width = Math.round(width * (MAX_DIM / height));
+          height = MAX_DIM;
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+        resolve({ dataUrl, dataBase64: dataUrl.split(",").pop(), mimeType: "image/jpeg" });
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function downloadHtml(html, name) {
   const blob = new Blob([html], { type: "text/html" });
   const url = URL.createObjectURL(blob);
@@ -75,7 +114,10 @@ function ProjectChat({ projectId, onBack }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [previewTab, setPreviewTab] = useState("preview"); // "preview" | "chat" (mobile toggle)
+  const [pendingImages, setPendingImages] = useState([]); // [{ name, mimeType, dataBase64, dataUrl }]
+  const [attaching, setAttaching] = useState(false);
   const scrollRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const load = useCallback(async () => {
     try {
@@ -88,16 +130,52 @@ function ProjectChat({ projectId, onBack }) {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }); }, [data, sending]);
 
+  async function handlePhotosPicked(e) {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!files.length) return;
+    if (pendingImages.length + files.length > MAX_IMAGES) {
+      setError(`No máximo ${MAX_IMAGES} fotos por mensagem.`);
+      return;
+    }
+    setAttaching(true);
+    setError("");
+    try {
+      const resized = await Promise.all(
+        files.map(async (file) => {
+          if (!file.type.startsWith("image/")) throw new Error("Selecione apenas arquivos de imagem.");
+          const { dataUrl, dataBase64, mimeType } = await resizeSitePhoto(file);
+          return { name: file.name, mimeType, dataBase64, dataUrl };
+        })
+      );
+      setPendingImages((p) => [...p, ...resized]);
+    } catch (err) {
+      setError(err.message || "Não foi possível anexar essa foto.");
+    } finally {
+      setAttaching(false);
+    }
+  }
+
+  function removePendingImage(idx) {
+    setPendingImages((p) => p.filter((_, i) => i !== idx));
+  }
+
   async function send(e) {
     e.preventDefault();
-    if (!input.trim() || sending || !data) return;
-    const text = input.trim();
+    if ((!input.trim() && !pendingImages.length) || sending || !data) return;
+    const text = input.trim() || "Veja as fotos anexadas e sugira como usá-las no site.";
+    const images = pendingImages;
     setInput("");
+    setPendingImages([]);
     setSending(true);
     setError("");
-    setData((d) => ({ ...d, messages: [...d.messages, { id: `tmp-${Date.now()}`, role: "user", text, hasHtml: false }] }));
+    const displayText = images.length ? `${text}\n\n📎 ${images.length} foto${images.length > 1 ? "s" : ""} anexada${images.length > 1 ? "s" : ""}` : text;
+    setData((d) => ({ ...d, messages: [...d.messages, { id: `tmp-${Date.now()}`, role: "user", text: displayText, hasHtml: false }] }));
     try {
-      const res = await api(`/api/ai-sites/${projectId}/messages`, { method: "POST", body: { message: text } });
+      const res = await api(`/api/ai-sites/${projectId}/messages`, {
+        method: "POST",
+        body: { message: text, images: images.map(({ name, mimeType, dataBase64 }) => ({ name, mimeType, dataBase64 })) },
+      });
       setData((d) => ({
         ...d,
         messages: [...d.messages, { id: `tmp-a-${Date.now()}`, role: "assistant", text: res.text, hasHtml: !!res.htmlSnapshot }],
@@ -127,12 +205,13 @@ function ProjectChat({ projectId, onBack }) {
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
         {data.messages.length === 0 && (
           <div className="text-xs text-inkfaint">
-            Descreva o site que você quer — ex.: &ldquo;landing page pra psicóloga infantil, tom acolhedor, cores em azul claro e branco, com seção de agendamento no WhatsApp&rdquo;.
+            Descreva o site que você quer — ex.: &ldquo;landing page pra psicóloga infantil, tom acolhedor, cores em azul claro e branco, com seção de agendamento no WhatsApp&rdquo;. Já pode anexar fotos (📎) junto com o pedido — a IA usa elas de verdade na página, não fica só no texto.
           </div>
         )}
         {data.messages.map((m) => (
           <div key={m.id} className={`text-sm rounded-2xl px-3.5 py-2.5 max-w-[92%] leading-relaxed whitespace-pre-wrap ${m.role === "user" ? "ml-auto bg-accent text-white" : "bg-surface2 text-ink"}`}>
             {m.text}
+            {m.role === "user" && !!m.imageCount && <div className="mt-1 text-[10.5px] opacity-80">📎 {m.imageCount} foto{m.imageCount > 1 ? "s" : ""} anexada{m.imageCount > 1 ? "s" : ""}</div>}
             {m.role === "assistant" && m.hasHtml && <div className="mt-1 text-[10.5px] opacity-70">🌐 site atualizado</div>}
           </div>
         ))}
@@ -145,10 +224,29 @@ function ProjectChat({ projectId, onBack }) {
         )}
         {error && <div className="text-xs text-danger bg-dangersoft border border-danger/30 rounded-lg px-3 py-2">{error}</div>}
       </div>
-      <form onSubmit={send} className="flex gap-2 p-3 border-t border-border">
+      {pendingImages.length > 0 && (
+        <div className="flex gap-2 flex-wrap px-3 pt-2.5 border-t border-border">
+          {pendingImages.map((img, i) => (
+            <div key={i} className="relative w-12 h-12 rounded-md overflow-hidden border border-border shrink-0">
+              <img src={img.dataUrl} alt={img.name} className="w-full h-full object-cover" />
+              <button type="button" onClick={() => removePendingImage(i)} title="Remover"
+                className="absolute top-0 right-0 w-4 h-4 bg-black/70 text-white text-[10px] flex items-center justify-center leading-none rounded-bl-md hover:bg-danger">
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <form onSubmit={send} className={`flex gap-2 p-3 ${pendingImages.length ? "pt-2" : "border-t border-border"}`}>
+        <button type="button" onClick={() => fileInputRef.current?.click()} disabled={attaching || pendingImages.length >= MAX_IMAGES}
+          title="Anexar fotos" aria-label="Anexar fotos"
+          className="shrink-0 w-9 h-9 flex items-center justify-center rounded-md border border-border bg-surface2 text-inksoft hover:text-accent hover:border-accent/50 transition disabled:opacity-50">
+          {attaching ? "…" : "📎"}
+        </button>
+        <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handlePhotosPicked} />
         <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Descreva o que você quer no site…"
           className="flex-1 px-3 py-2 text-sm rounded-md border border-border bg-surface2 text-ink" />
-        <button disabled={sending || !input.trim()} className="bg-accent text-white text-sm font-medium px-4 rounded-md hover:bg-accentink disabled:opacity-60">
+        <button disabled={sending || (!input.trim() && !pendingImages.length)} className="bg-accent text-white text-sm font-medium px-4 rounded-md hover:bg-accentink disabled:opacity-60">
           {sending ? "Gerando…" : "Enviar"}
         </button>
       </form>
