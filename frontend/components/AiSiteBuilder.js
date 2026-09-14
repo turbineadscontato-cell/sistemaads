@@ -116,6 +116,8 @@ function ProjectChat({ projectId, onBack }) {
   const [previewTab, setPreviewTab] = useState("preview"); // "preview" | "chat" (mobile toggle)
   const [pendingImages, setPendingImages] = useState([]); // [{ name, mimeType, dataBase64, dataUrl }]
   const [attaching, setAttaching] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState("");
   const scrollRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -158,6 +160,19 @@ function ProjectChat({ projectId, onBack }) {
 
   function removePendingImage(idx) {
     setPendingImages((p) => p.filter((_, i) => i !== idx));
+  }
+
+  async function publish() {
+    setPublishing(true);
+    setPublishError("");
+    try {
+      const res = await api(`/api/ai-sites/${projectId}/publish`, { method: "POST" });
+      setData((d) => ({ ...d, project: { ...d.project, netlifyUrl: res.url, publishedAt: new Date().toISOString() } }));
+    } catch (err) {
+      setPublishError(err.message);
+    } finally {
+      setPublishing(false);
+    }
   }
 
   async function send(e) {
@@ -263,9 +278,31 @@ function ProjectChat({ projectId, onBack }) {
               className="text-[11px] font-medium bg-surface2 border border-border text-inksoft hover:text-ink px-2.5 py-1 rounded-md transition">
               Baixar HTML
             </button>
+            <button onClick={publish} disabled={publishing}
+              title={data.project.netlifyUrl ? "Publica a versão mais recente no mesmo link" : "Coloca esse site no ar, com um link público"}
+              className="text-[11px] font-medium bg-accent text-white hover:bg-accentink px-2.5 py-1 rounded-md transition disabled:opacity-60">
+              {publishing ? "Publicando…" : data.project.netlifyUrl ? "Atualizar site no ar" : "Publicar"}
+            </button>
           </div>
         )}
       </div>
+      {(data.project.netlifyUrl || publishError) && (
+        <div className="px-3 py-2 border-b border-border shrink-0 text-[11.5px]">
+          {data.project.netlifyUrl && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-inkfaint">🔗 no ar em</span>
+              <a href={data.project.netlifyUrl} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline truncate">
+                {data.project.netlifyUrl.replace(/^https?:\/\//, "")}
+              </a>
+              <button type="button" onClick={() => navigator.clipboard?.writeText(data.project.netlifyUrl)}
+                className="text-inkfaint hover:text-ink" title="Copiar link">
+                copiar
+              </button>
+            </div>
+          )}
+          {publishError && <p className="text-danger mt-1">{publishError}</p>}
+        </div>
+      )}
       {data.currentHtml
         ? <iframe title="Prévia do site" srcDoc={data.currentHtml} sandbox="allow-scripts" className="flex-1 w-full bg-white" />
         : <div className="flex-1 flex items-center justify-center text-xs text-inkfaint p-6 text-center">Ainda não há um site gerado nesse projeto — descreva o que você quer no chat.</div>}
