@@ -3,117 +3,119 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 
-// Construtor de sites com IA — chat + prévia ao vivo, uso interno (sócio/
-// gestor). Cada "projeto" guarda a conversa inteira; a prévia sempre mostra
-// o HTML mais recente que a IA gerou (currentHtml, vindo do backend). Não
-// usa streaming de verdade — a resposta inteira chega de uma vez, o que pode
-// levar alguns segundos numa página grande (por isso o aviso no botão).
+// Publicação de sites em HTML pronto (14/09/2026) — o site em si é feito do
+// jeito que a equipe já faz normalmente (ex: no chat com a IA aqui direto),
+// baixado como .html e subido aqui só pra publicar/atualizar no ar via
+// Netlify, com o início do subdomínio escolhido na hora. Substitui a versão
+// anterior (chat + IA gerando o site aos poucos com upload de foto/vídeo),
+// removida a pedido da sócia — o resultado automático não ficava bom.
+//
+// Dois lugares usam esse mesmo arquivo: a tela central "Publicar site" (aba
+// de Assistentes IA — export default, lista TODOS os sites) e um painel
+// compacto dentro da própria página do cliente (export ClientSitePanel —
+// mostra só o site daquele cliente, sem precisar escolher).
+
+const MAX_HTML_MB = 28; // folga sob o limite de 30MB do backend
 
 function fmtDate(iso) {
   if (!iso) return "";
   return new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-const MAX_DIM = 1600; // fotos de site precisam de mais resolução que um avatar
-const MAX_IMAGES = 4; // limite por mensagem — mantém o total dentro do limite de tamanho do backend
-const MAX_VIDEO_MB = 20; // vídeo de depoimento enviado como arquivo (14/09/2026) — combinado com a sócia
-
-// Vídeo não dá pra redimensionar no navegador como foto — só lê o arquivo
-// puro em base64 e valida o tamanho. Sem preview em miniatura (geraria
-// complexidade desnecessária pra um anexo só por mensagem).
-function readFileAsBase64(file) {
+function readHtmlFile(file) {
   return new Promise((resolve, reject) => {
+    if (!file.name.toLowerCase().endsWith(".html") && file.type !== "text/html") {
+      reject(new Error("Selecione um arquivo .html."));
+      return;
+    }
+    if (file.size > MAX_HTML_MB * 1024 * 1024) {
+      reject(new Error(`Esse arquivo passa de ${MAX_HTML_MB}MB.`));
+      return;
+    }
     const reader = new FileReader();
     reader.onerror = () => reject(new Error("Não foi possível ler o arquivo."));
-    reader.onload = () => resolve({ dataUrl: reader.result, dataBase64: String(reader.result).split(",").pop() });
-    reader.readAsDataURL(file);
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.readAsText(file);
   });
 }
 
-// Redimensiona a foto no navegador antes de anexar — mesmo princípio já
-// usado em AvatarButton.js/AIAssistants.js (canvas + toDataURL), só que com
-// um tamanho máximo maior porque essas fotos viram imagem de destaque no
-// site (hero, seção "sobre" etc), não um avatar pequeno.
-function resizeSitePhoto(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Não foi possível ler a imagem."));
-    reader.onload = () => {
-      const img = new window.Image();
-      img.onerror = () => reject(new Error("Arquivo de imagem inválido."));
-      img.onload = () => {
-        let { width, height } = img;
-        if (width > height && width > MAX_DIM) {
-          height = Math.round(height * (MAX_DIM / width));
-          width = MAX_DIM;
-        } else if (height >= width && height > MAX_DIM) {
-          width = Math.round(width * (MAX_DIM / height));
-          height = MAX_DIM;
-        }
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, width, height);
-        ctx.drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
-        resolve({ dataUrl, dataBase64: dataUrl.split(",").pop(), mimeType: "image/jpeg" });
-      };
-      img.src = reader.result;
-    };
-    reader.readAsDataURL(file);
-  });
+function slugPreview(text) {
+  return String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
-function downloadHtml(html, name) {
-  const blob = new Blob([html], { type: "text/html" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${(name || "site").replace(/[^a-z0-9-_]+/gi, "-").toLowerCase()}.html`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
-function NewProjectForm({ clients, onCreated }) {
-  const [name, setName] = useState("");
-  const [clientId, setClientId] = useState("");
-  const [creating, setCreating] = useState(false);
+// Formulário de publicação de um site NOVO — usado tanto na tela central
+// (com seletor de cliente) quanto no painel do cliente (clientId fixo).
+function PublishForm({ clients, fixedClientId, defaultName, onPublished }) {
+  const [name, setName] = useState(defaultName || "");
+  const [subdomain, setSubdomain] = useState("");
+  const [clientId, setClientId] = useState(fixedClientId || "");
+  const [file, setFile] = useState(null);
+  const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState("");
+  const fileInputRef = useRef(null);
 
   async function submit(e) {
     e.preventDefault();
-    if (!name.trim() || creating) return;
-    setCreating(true);
+    if (!name.trim() || !subdomain.trim() || !file || publishing) return;
+    setPublishing(true);
     setError("");
     try {
-      const project = await api("/api/ai-sites", { method: "POST", body: { name: name.trim(), clientId: clientId || undefined } });
-      setName("");
-      setClientId("");
-      onCreated(project);
+      const html = await readHtmlFile(file);
+      const project = await api("/api/ai-sites/publish", {
+        method: "POST",
+        body: { name: name.trim(), subdomain: subdomain.trim(), clientId: (fixedClientId || clientId) || undefined, html },
+      });
+      setName(defaultName || "");
+      setSubdomain("");
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      onPublished(project);
     } catch (err) {
       setError(err.message);
     } finally {
-      setCreating(false);
+      setPublishing(false);
     }
   }
 
   return (
     <form onSubmit={submit} className="bg-surface border border-border rounded-xl shadow-sm p-3 space-y-2.5">
-      <p className="text-xs font-medium text-ink">Novo projeto de site</p>
+      <p className="text-xs font-medium text-ink">Publicar site novo</p>
       <div className="flex flex-col sm:flex-row gap-2">
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do projeto (ex: Site Dra. Ana)"
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do site (ex: Site Dra. Ana)"
           className="flex-1 px-3 py-2 text-sm rounded-md border border-border bg-surface2 text-ink" />
-        <select value={clientId} onChange={(e) => setClientId(e.target.value)}
-          className="px-3 py-2 text-sm rounded-md border border-border bg-surface2 text-ink sm:w-56">
-          <option value="">Sem cliente vinculado</option>
-          {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        <button disabled={creating || !name.trim()} className="shrink-0 bg-accent text-white text-sm font-medium px-4 py-2 rounded-md hover:bg-accentink disabled:opacity-60">
-          {creating ? "Criando…" : "Criar"}
+        {!fixedClientId && (
+          <select value={clientId} onChange={(e) => setClientId(e.target.value)}
+            className="px-3 py-2 text-sm rounded-md border border-border bg-surface2 text-ink sm:w-56">
+            <option value="">Sem cliente vinculado</option>
+            {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        )}
+      </div>
+      <div>
+        <div className="flex items-center gap-1.5">
+          <input value={subdomain} onChange={(e) => setSubdomain(e.target.value)} placeholder="inicio-do-link"
+            className="flex-1 px-3 py-2 text-sm rounded-md border border-border bg-surface2 text-ink" />
+          <span className="text-xs text-inkfaint shrink-0">.netlify.app</span>
+        </div>
+        {subdomain.trim() && (
+          <p className="text-[11px] text-inkfaint mt-1">
+            Vai ficar em <span className="text-ink">{slugPreview(subdomain) || "site"}.netlify.app</span>
+            {slugPreview(subdomain) !== subdomain.trim() && " (ajustado pra caber no formato do link)"}
+            {" — se esse nome já estiver em uso, a Netlify adiciona um número no final automaticamente."}
+          </p>
+        )}
+      </div>
+      <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
+        <input ref={fileInputRef} type="file" accept=".html,text/html" onChange={(e) => setFile(e.target.files?.[0] || null)}
+          className="text-xs text-inksoft file:mr-2 file:px-2.5 file:py-1.5 file:rounded-md file:border file:border-border file:bg-surface2 file:text-inksoft file:text-xs" />
+        <button disabled={publishing || !name.trim() || !subdomain.trim() || !file}
+          className="shrink-0 bg-accent text-white text-sm font-medium px-4 py-2 rounded-md hover:bg-accentink disabled:opacity-60">
+          {publishing ? "Publicando…" : "Publicar"}
         </button>
       </div>
       {error && <div className="text-xs text-danger bg-dangersoft border border-danger/30 rounded-lg px-3 py-2">{error}</div>}
@@ -121,290 +123,81 @@ function NewProjectForm({ clients, onCreated }) {
   );
 }
 
-function ProjectChat({ projectId, onBack }) {
-  const [data, setData] = useState(null); // { project, messages, currentHtml }
-  const [input, setInput] = useState("");
-  const [sending, setSending] = useState(false);
+// Um site já publicado — link, cliente, data, e ações (atualizar/copiar/
+// abrir/remover). "Atualizar" sobe um novo .html mantendo o mesmo link.
+function SiteRow({ project, showClient, onUpdated, onRemoved }) {
+  const [updating, setUpdating] = useState(false);
   const [error, setError] = useState("");
-  const [previewTab, setPreviewTab] = useState("preview"); // "preview" | "chat" (mobile toggle)
-  const [pendingImages, setPendingImages] = useState([]); // [{ name, mimeType, dataBase64, dataUrl }]
-  const [pendingVideo, setPendingVideo] = useState(null); // { name, mimeType, dataBase64, sizeMb } | null
-  const [attaching, setAttaching] = useState(false);
-  const [attachingVideo, setAttachingVideo] = useState(false);
-  const [publishing, setPublishing] = useState(false);
-  const [publishError, setPublishError] = useState("");
-  const scrollRef = useRef(null);
   const fileInputRef = useRef(null);
-  const videoInputRef = useRef(null);
 
-  const load = useCallback(async () => {
-    try {
-      setData(await api(`/api/ai-sites/${projectId}`));
-    } catch (err) {
-      setError(err.message);
-    }
-  }, [projectId]);
-
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }); }, [data, sending]);
-
-  async function handlePhotosPicked(e) {
-    const files = Array.from(e.target.files || []);
-    e.target.value = "";
-    if (!files.length) return;
-    if (pendingImages.length + files.length > MAX_IMAGES) {
-      setError(`No máximo ${MAX_IMAGES} fotos por mensagem.`);
-      return;
-    }
-    setAttaching(true);
-    setError("");
-    try {
-      const resized = await Promise.all(
-        files.map(async (file) => {
-          if (!file.type.startsWith("image/")) throw new Error("Selecione apenas arquivos de imagem.");
-          const { dataUrl, dataBase64, mimeType } = await resizeSitePhoto(file);
-          return { name: file.name, mimeType, dataBase64, dataUrl };
-        })
-      );
-      setPendingImages((p) => [...p, ...resized]);
-    } catch (err) {
-      setError(err.message || "Não foi possível anexar essa foto.");
-    } finally {
-      setAttaching(false);
-    }
-  }
-
-  function removePendingImage(idx) {
-    setPendingImages((p) => p.filter((_, i) => i !== idx));
-  }
-
-  async function handleVideoPicked(e) {
+  async function handleUpdateFile(e) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    if (!file.type.startsWith("video/")) {
-      setError("Selecione apenas arquivos de vídeo.");
-      return;
-    }
-    if (file.size > MAX_VIDEO_MB * 1024 * 1024) {
-      setError(`Esse vídeo passa de ${MAX_VIDEO_MB}MB — comprima ou corte antes de anexar.`);
-      return;
-    }
-    setAttachingVideo(true);
+    setUpdating(true);
     setError("");
     try {
-      const { dataBase64 } = await readFileAsBase64(file);
-      setPendingVideo({ name: file.name, mimeType: file.type, dataBase64, sizeMb: (file.size / (1024 * 1024)).toFixed(1) });
-    } catch (err) {
-      setError(err.message || "Não foi possível anexar esse vídeo.");
-    } finally {
-      setAttachingVideo(false);
-    }
-  }
-
-  async function publish() {
-    setPublishing(true);
-    setPublishError("");
-    try {
-      const res = await api(`/api/ai-sites/${projectId}/publish`, { method: "POST" });
-      setData((d) => ({ ...d, project: { ...d.project, netlifyUrl: res.url, publishedAt: new Date().toISOString() } }));
-    } catch (err) {
-      setPublishError(err.message);
-    } finally {
-      setPublishing(false);
-    }
-  }
-
-  async function send(e) {
-    e.preventDefault();
-    if ((!input.trim() && !pendingImages.length && !pendingVideo) || sending || !data) return;
-    const text = input.trim() || (pendingVideo ? "Veja o vídeo anexado e use como depoimento no site." : "Veja as fotos anexadas e sugira como usá-las no site.");
-    const images = pendingImages;
-    const video = pendingVideo;
-    setInput("");
-    setPendingImages([]);
-    setPendingVideo(null);
-    setSending(true);
-    setError("");
-    const tags = [
-      images.length ? `📎 ${images.length} foto${images.length > 1 ? "s" : ""} anexada${images.length > 1 ? "s" : ""}` : "",
-      video ? "🎬 1 vídeo anexado" : "",
-    ].filter(Boolean).join(" · ");
-    const displayText = tags ? `${text}\n\n${tags}` : text;
-    setData((d) => ({ ...d, messages: [...d.messages, { id: `tmp-${Date.now()}`, role: "user", text: displayText, hasHtml: false }] }));
-    try {
-      const res = await api(`/api/ai-sites/${projectId}/messages`, {
-        method: "POST",
-        body: {
-          message: text,
-          images: images.map(({ name, mimeType, dataBase64 }) => ({ name, mimeType, dataBase64 })),
-          videos: video ? [{ name: video.name, mimeType: video.mimeType, dataBase64: video.dataBase64 }] : [],
-        },
-      });
-      setData((d) => ({
-        ...d,
-        messages: [...d.messages, { id: `tmp-a-${Date.now()}`, role: "assistant", text: res.text, hasHtml: !!res.htmlSnapshot }],
-        currentHtml: res.htmlSnapshot || d.currentHtml,
-      }));
-      if (res.htmlSnapshot) setPreviewTab("preview");
+      const html = await readHtmlFile(file);
+      const updated = await api("/api/ai-sites/publish", { method: "POST", body: { projectId: project.id, html } });
+      onUpdated(updated);
     } catch (err) {
       setError(err.message);
     } finally {
-      setSending(false);
+      setUpdating(false);
     }
   }
 
-  if (!data) {
-    return (
-      <div className="space-y-3">
-        {error
-          ? <div className="text-xs text-danger bg-dangersoft border border-danger/30 rounded-lg px-3 py-2">{error}</div>
-          : <div className="text-xs text-inkfaint">Carregando projeto…</div>}
-        <button onClick={onBack} className="text-xs text-inkfaint hover:text-ink">← voltar</button>
-      </div>
-    );
+  async function remove() {
+    if (!confirm(`Remover "${project.name}" dessa lista? O site continua no ar na Netlify — isso só tira ele daqui do sistema.`)) return;
+    try {
+      await api(`/api/ai-sites/${project.id}`, { method: "DELETE" });
+      onRemoved(project.id);
+    } catch (err) {
+      setError(err.message);
+    }
   }
 
-  const chatPane = (
-    <div className="bg-surface border border-border rounded-xl shadow-sm flex flex-col h-[520px]">
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
-        {data.messages.length === 0 && (
-          <div className="text-xs text-inkfaint">
-            Descreva o site que você quer — ex.: &ldquo;landing page pra psicóloga infantil, tom acolhedor, cores em azul claro e branco, com seção de agendamento no WhatsApp&rdquo;. Já pode anexar fotos (📎) e até um vídeo de depoimento (🎬, até {MAX_VIDEO_MB}MB) junto com o pedido — a IA usa de verdade na página, não fica só no texto.
-          </div>
-        )}
-        {data.messages.map((m) => (
-          <div key={m.id} className={`text-sm rounded-2xl px-3.5 py-2.5 max-w-[92%] leading-relaxed whitespace-pre-wrap ${m.role === "user" ? "ml-auto bg-accent text-white" : "bg-surface2 text-ink"}`}>
-            {m.text}
-            {m.role === "user" && !!m.imageCount && <div className="mt-1 text-[10.5px] opacity-80">📎 {m.imageCount} foto{m.imageCount > 1 ? "s" : ""} anexada{m.imageCount > 1 ? "s" : ""}</div>}
-            {m.role === "user" && !!m.videoCount && <div className="mt-1 text-[10.5px] opacity-80">🎬 {m.videoCount} vídeo{m.videoCount > 1 ? "s" : ""} anexado{m.videoCount > 1 ? "s" : ""}</div>}
-            {m.role === "assistant" && m.hasHtml && <div className="mt-1 text-[10.5px] opacity-70">🌐 site atualizado</div>}
-          </div>
-        ))}
-        {sending && (
-          <div className="flex items-center gap-1 px-3.5 py-2.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-inkfaint animate-bounce [animation-delay:-0.3s]" />
-            <span className="w-1.5 h-1.5 rounded-full bg-inkfaint animate-bounce [animation-delay:-0.15s]" />
-            <span className="w-1.5 h-1.5 rounded-full bg-inkfaint animate-bounce" />
-          </div>
-        )}
-        {error && <div className="text-xs text-danger bg-dangersoft border border-danger/30 rounded-lg px-3 py-2">{error}</div>}
-      </div>
-      {(pendingImages.length > 0 || pendingVideo) && (
-        <div className="flex gap-2 flex-wrap px-3 pt-2.5 border-t border-border">
-          {pendingImages.map((img, i) => (
-            <div key={i} className="relative w-12 h-12 rounded-md overflow-hidden border border-border shrink-0">
-              <img src={img.dataUrl} alt={img.name} className="w-full h-full object-cover" />
-              <button type="button" onClick={() => removePendingImage(i)} title="Remover"
-                className="absolute top-0 right-0 w-4 h-4 bg-black/70 text-white text-[10px] flex items-center justify-center leading-none rounded-bl-md hover:bg-danger">
-                ×
-              </button>
-            </div>
-          ))}
-          {pendingVideo && (
-            <div className="relative flex items-center gap-1.5 h-12 pl-2 pr-6 rounded-md border border-border bg-surface2 shrink-0 max-w-[220px]">
-              <span className="text-base">🎬</span>
-              <div className="min-w-0">
-                <div className="text-[11px] text-ink truncate">{pendingVideo.name}</div>
-                <div className="text-[10px] text-inkfaint">{pendingVideo.sizeMb}MB</div>
-              </div>
-              <button type="button" onClick={() => setPendingVideo(null)} title="Remover"
-                className="absolute top-0 right-0 w-4 h-4 bg-black/70 text-white text-[10px] flex items-center justify-center leading-none rounded-bl-md hover:bg-danger">
-                ×
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-      <form onSubmit={send} className={`flex gap-2 p-3 ${(pendingImages.length || pendingVideo) ? "pt-2" : "border-t border-border"}`}>
-        <button type="button" onClick={() => fileInputRef.current?.click()} disabled={attaching || pendingImages.length >= MAX_IMAGES}
-          title="Anexar fotos" aria-label="Anexar fotos"
-          className="shrink-0 w-9 h-9 flex items-center justify-center rounded-md border border-border bg-surface2 text-inksoft hover:text-accent hover:border-accent/50 transition disabled:opacity-50">
-          {attaching ? "…" : "📎"}
-        </button>
-        <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handlePhotosPicked} />
-        <button type="button" onClick={() => videoInputRef.current?.click()} disabled={attachingVideo || !!pendingVideo}
-          title={`Anexar vídeo (depoimento, até ${MAX_VIDEO_MB}MB)`} aria-label="Anexar vídeo"
-          className="shrink-0 w-9 h-9 flex items-center justify-center rounded-md border border-border bg-surface2 text-inksoft hover:text-accent hover:border-accent/50 transition disabled:opacity-50">
-          {attachingVideo ? "…" : "🎬"}
-        </button>
-        <input ref={videoInputRef} type="file" accept="video/*" className="hidden" onChange={handleVideoPicked} />
-        <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Descreva o que você quer no site…"
-          className="flex-1 px-3 py-2 text-sm rounded-md border border-border bg-surface2 text-ink" />
-        <button disabled={sending || (!input.trim() && !pendingImages.length && !pendingVideo)} className="bg-accent text-white text-sm font-medium px-4 rounded-md hover:bg-accentink disabled:opacity-60">
-          {sending ? "Gerando…" : "Enviar"}
-        </button>
-      </form>
-    </div>
-  );
-
-  const previewPane = (
-    <div className="bg-surface border border-border rounded-xl shadow-sm h-[520px] flex flex-col overflow-hidden">
-      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border shrink-0">
-        <span className="text-[11px] uppercase tracking-wide text-inkfaint">Prévia ao vivo</span>
-        {data.currentHtml && (
-          <div className="flex gap-1.5">
-            <button onClick={() => downloadHtml(data.currentHtml, data.project.name)}
-              className="text-[11px] font-medium bg-surface2 border border-border text-inksoft hover:text-ink px-2.5 py-1 rounded-md transition">
-              Baixar HTML
-            </button>
-            <button onClick={publish} disabled={publishing}
-              title={data.project.netlifyUrl ? "Publica a versão mais recente no mesmo link" : "Coloca esse site no ar, com um link público"}
-              className="text-[11px] font-medium bg-accent text-white hover:bg-accentink px-2.5 py-1 rounded-md transition disabled:opacity-60">
-              {publishing ? "Publicando…" : data.project.netlifyUrl ? "Atualizar site no ar" : "Publicar"}
-            </button>
-          </div>
-        )}
-      </div>
-      {(data.project.netlifyUrl || publishError) && (
-        <div className="px-3 py-2 border-b border-border shrink-0 text-[11.5px]">
-          {data.project.netlifyUrl && (
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-inkfaint">🔗 no ar em</span>
-              <a href={data.project.netlifyUrl} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline truncate">
-                {data.project.netlifyUrl.replace(/^https?:\/\//, "")}
-              </a>
-              <button type="button" onClick={() => navigator.clipboard?.writeText(data.project.netlifyUrl)}
-                className="text-inkfaint hover:text-ink" title="Copiar link">
-                copiar
-              </button>
-            </div>
-          )}
-          {publishError && <p className="text-danger mt-1">{publishError}</p>}
-        </div>
-      )}
-      {data.currentHtml
-        ? <iframe title="Prévia do site" srcDoc={data.currentHtml} sandbox="allow-scripts" className="flex-1 w-full bg-white" />
-        : <div className="flex-1 flex items-center justify-center text-xs text-inkfaint p-6 text-center">Ainda não há um site gerado nesse projeto — descreva o que você quer no chat.</div>}
-    </div>
-  );
-
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          <button onClick={onBack} className="text-xs text-inkfaint hover:text-ink">← voltar</button>
-          <div className="font-display font-semibold text-sm text-ink mt-0.5">
-            {data.project.name}{data.project.clientId ? "" : ""}
+    <div className="px-3.5 py-2.5 space-y-1">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="min-w-0">
+          <div className="text-sm text-ink truncate">{project.name}</div>
+          <div className="text-[11px] text-inkfaint truncate">
+            {showClient && project.clientName ? `Cliente: ${project.clientName} · ` : ""}
+            publicado {fmtDate(project.publishedAt)}
           </div>
         </div>
-        <div className="sm:hidden flex gap-1 bg-surface border border-border rounded-lg p-1">
-          <button onClick={() => setPreviewTab("chat")} className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition ${previewTab === "chat" ? "bg-accent text-white" : "text-inksoft"}`}>Chat</button>
-          <button onClick={() => setPreviewTab("preview")} className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition ${previewTab === "preview" ? "bg-accent text-white" : "text-inksoft"}`}>Prévia</button>
+        <div className="flex items-center gap-2 shrink-0">
+          {project.netlifyUrl && (
+            <a href={project.netlifyUrl} target="_blank" rel="noopener noreferrer" className="text-[11.5px] text-accent hover:underline">
+              abrir
+            </a>
+          )}
+          <button type="button" onClick={() => project.netlifyUrl && navigator.clipboard?.writeText(project.netlifyUrl)}
+            className="text-[11.5px] text-inkfaint hover:text-ink">
+            copiar link
+          </button>
+          <button type="button" onClick={() => fileInputRef.current?.click()} disabled={updating}
+            className="text-[11.5px] font-medium bg-surface2 border border-border text-inksoft hover:text-ink px-2.5 py-1 rounded-md transition disabled:opacity-60">
+            {updating ? "Atualizando…" : "Atualizar"}
+          </button>
+          <input ref={fileInputRef} type="file" accept=".html,text/html" className="hidden" onChange={handleUpdateFile} />
+          <button type="button" onClick={remove} className="text-[11.5px] text-inkfaint hover:text-danger transition">
+            remover
+          </button>
         </div>
       </div>
-      <div className="grid sm:grid-cols-2 gap-3">
-        <div className={previewTab === "chat" ? "block" : "hidden sm:block"}>{chatPane}</div>
-        <div className={previewTab === "preview" ? "block" : "hidden sm:block"}>{previewPane}</div>
-      </div>
+      {project.netlifyUrl && <div className="text-[11px] text-inksoft truncate">{project.netlifyUrl.replace(/^https?:\/\//, "")}</div>}
+      {error && <div className="text-xs text-danger bg-dangersoft border border-danger/30 rounded-lg px-3 py-2">{error}</div>}
     </div>
   );
 }
 
+// Tela central (aba "Publicar site" dentro de Assistentes IA) — lista TODOS
+// os sites que o usuário tem acesso, com formulário de publicar um novo.
 export default function AiSiteBuilder() {
   const [projects, setProjects] = useState(null);
   const [clients, setClients] = useState([]);
-  const [openId, setOpenId] = useState(null);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
@@ -420,43 +213,86 @@ export default function AiSiteBuilder() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { api("/api/clients").then(setClients).catch(() => setClients([])); }, []);
 
-  async function remove(id, e) {
-    e.stopPropagation();
-    if (!confirm("Remover esse projeto de site? A conversa e o site gerado somem junto.")) return;
-    try {
-      await api(`/api/ai-sites/${id}`, { method: "DELETE" });
-      setProjects((p) => p.filter((x) => x.id !== id));
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  if (openId) {
-    return <ProjectChat projectId={openId} onBack={() => { setOpenId(null); load(); }} />;
-  }
-
   return (
     <div className="space-y-3">
       <p className="text-xs text-inkfaint">
-        Descreva o site que você precisa pra um cliente e a IA gera a página com prévia ao vivo, do lado — igual um chat, só que o resultado é o site pronto pra baixar. Uso interno da equipe.
+        Suba o arquivo .html de um site pronto (ex: baixado daqui do chat com a IA) pra publicar direto no ar, com o início do link que você escolher. Uso interno da equipe.
       </p>
-      <NewProjectForm clients={clients} onCreated={(p) => { setProjects((prev) => [{ ...p, clientName: null, createdByName: null, messageCount: 0 }, ...(prev || [])]); setOpenId(p.id); }} />
+      <PublishForm clients={clients} onPublished={(p) => { setProjects((prev) => [p, ...(prev || [])]); }} />
 
       {error && <div className="text-xs text-danger bg-dangersoft border border-danger/30 rounded-lg px-3 py-2">{error}</div>}
 
       <div className="bg-surface border border-border rounded-xl shadow-sm divide-y divide-border">
-        {projects === null && <div className="px-4 py-6 text-center text-xs text-inkfaint">Carregando projetos…</div>}
-        {projects !== null && projects.length === 0 && <div className="px-4 py-6 text-center text-xs text-inkfaint">Nenhum projeto de site ainda — crie o primeiro acima.</div>}
+        {projects === null && <div className="px-4 py-6 text-center text-xs text-inkfaint">Carregando sites…</div>}
+        {projects !== null && projects.length === 0 && <div className="px-4 py-6 text-center text-xs text-inkfaint">Nenhum site publicado ainda — publique o primeiro acima.</div>}
         {projects && projects.map((p) => (
-          <button key={p.id} onClick={() => setOpenId(p.id)} className="w-full flex items-center justify-between gap-2 px-4 py-2.5 text-left hover:bg-surface2/60 transition">
-            <div className="min-w-0">
-              <div className="text-sm text-ink truncate">{p.name}</div>
-              <div className="text-[11px] text-inkfaint truncate">{p.clientName ? `Cliente: ${p.clientName} · ` : ""}{p.messageCount} mensage{p.messageCount === 1 ? "m" : "ns"} · atualizado {fmtDate(p.updatedAt)}</div>
-            </div>
-            <span onClick={(e) => remove(p.id, e)} className="shrink-0 text-[11px] text-inkfaint hover:text-danger transition">remover</span>
-          </button>
+          <SiteRow key={p.id} project={p} showClient
+            onUpdated={(updated) => setProjects((prev) => prev.map((x) => (x.id === updated.id ? updated : x)))}
+            onRemoved={(id) => setProjects((prev) => prev.filter((x) => x.id !== id))} />
         ))}
       </div>
+    </div>
+  );
+}
+
+// Painel compacto pra embutir dentro da página do cliente — mostra só
+// o(s) site(s) desse cliente, com cliente já fixo (não precisa escolher de
+// novo) e a mesma possibilidade de atualizar o site publicado.
+export function ClientSitePanel({ clientId, clientName }) {
+  const [projects, setProjects] = useState(null);
+  const [error, setError] = useState("");
+  const [showForm, setShowForm] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await api(`/api/ai-sites?clientId=${clientId}`);
+      setProjects(res.projects);
+    } catch (err) {
+      setError(err.message);
+      setProjects([]);
+    }
+  }, [clientId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <div className="bg-surface border border-border rounded-xl shadow-sm">
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
+        <span className="text-xs font-medium text-ink">🌐 Site do cliente</span>
+        {projects !== null && projects.length > 0 && !showForm && (
+          <button onClick={() => setShowForm(true)} className="text-[11px] text-accent hover:underline">+ publicar outro site</button>
+        )}
+      </div>
+
+      {projects === null && <div className="px-4 py-4 text-center text-xs text-inkfaint">Carregando…</div>}
+
+      {projects !== null && projects.length === 0 && !showForm && (
+        <div className="px-4 py-4 text-center">
+          <p className="text-xs text-inkfaint mb-2.5">Esse cliente ainda não tem site publicado pelo sistema.</p>
+          <button onClick={() => setShowForm(true)} className="text-xs font-medium bg-accent text-white px-3 py-1.5 rounded-md hover:bg-accentink">
+            Publicar site
+          </button>
+        </div>
+      )}
+
+      {showForm && (
+        <div className="p-3">
+          <PublishForm clients={[]} fixedClientId={clientId} defaultName={`Site ${clientName || ""}`.trim()}
+            onPublished={(p) => { setProjects((prev) => [p, ...(prev || [])]); setShowForm(false); }} />
+        </div>
+      )}
+
+      {projects !== null && projects.length > 0 && (
+        <div className="divide-y divide-border">
+          {projects.map((p) => (
+            <SiteRow key={p.id} project={p}
+              onUpdated={(updated) => setProjects((prev) => prev.map((x) => (x.id === updated.id ? updated : x)))}
+              onRemoved={(id) => setProjects((prev) => prev.filter((x) => x.id !== id))} />
+          ))}
+        </div>
+      )}
+
+      {error && <div className="mx-3 mb-3 text-xs text-danger bg-dangersoft border border-danger/30 rounded-lg px-3 py-2">{error}</div>}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { api, getUser } from "../../../../lib/api";
 import TaskTitleField from "../../../../components/TaskTitleField";
 import ClientFiles from "../../../../components/ClientFiles";
+import { ClientSitePanel } from "../../../../components/AiSiteBuilder";
 import ClientReports from "../../../../components/ClientReports";
 import ClientLeadsBoard from "../../../../components/ClientLeadsBoard";
 import ContentCalendar from "../../../../components/ContentCalendar";
@@ -937,6 +938,7 @@ export default function ClientDetail() {
             </div>
           )}
 
+          {canOperate && <ClientSitePanel clientId={id} clientName={client?.name} />}
           <ClientFiles clientId={id} canManage={canOperate} showScriptGenerator={canOperate} allowClientUpload={false} />
           {!isSoSistema && <ClientReports clientId={id} canManage={canOperate} />}
           <ClientLeadsBoard clientId={id} canEdit={canOperate} />

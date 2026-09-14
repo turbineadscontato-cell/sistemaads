@@ -40,10 +40,9 @@ app.use(
   })
 );
 // Raised from Express's 100kb default — client files, monthly-report CSVs,
-// branding logos e agora vídeo de depoimento (construtor de sites com IA,
-// 14/09/2026 — até 20MB de vídeo bruto vira uns 27MB em base64 dentro do
-// JSON) travel as base64 JSON, which runs noticeably bigger than the
-// original binary.
+// branding logos e o HTML de site publicado (rota /api/ai-sites/publish,
+// 14/09/2026 — pode vir com fotos embutidas como data URL) travel as base64
+// JSON, which runs noticeably bigger than the original binary.
 app.use(express.json({ limit: "35mb" }));
 
 app.get("/health", (req, res) => res.json({ ok: true }));

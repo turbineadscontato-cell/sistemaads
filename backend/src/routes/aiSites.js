@@ -1,127 +1,21 @@
 const express = require("express");
 const prisma = require("../prisma");
 const { requireAuth, requireRole } = require("../middleware/auth");
-const { callClaudeRaw } = require("../lib/claude");
-const { isNetlifyConfigured, publishHtml } = require("../lib/netlify");
+const { isNetlifyConfigured, publishHtml, slugify } = require("../lib/netlify");
 
-// Construtor de sites com IA — chat + prévia ao vivo, uso INTERNO (só
-// sócio/gestor, nunca atendente/cliente). Cada "projeto" é uma conversa que
-// vai gerando/atualizando um site inteiro; a última mensagem do assistente
-// que trouxe HTML é sempre a versão atual (ver htmlSnapshot no schema).
+// Publicação de sites em HTML pronto (14/09/2026) — uso INTERNO, só sócio/
+// gestor. O site em si é feito do jeito que a equipe já faz normalmente
+// (ex: no chat com a IA aqui direto), baixado como .html e subido aqui só
+// pra publicar/atualizar no ar via Netlify, com o subdomínio escolhido na
+// hora. Substitui a versão anterior (chat + IA gerando o site aos poucos),
+// removida a pedido da sócia — o resultado automático não ficava bom.
 const router = express.Router();
 router.use(requireAuth, requireRole("SOCIO", "GESTOR"));
 
-const MAX_HISTORY_MESSAGES = 30;
-const MAX_TOKENS = 8000; // página inteira em HTML/CSS/JS pode ser longa
-// Limites pensados pra caber com folga dentro do limite de 8mb do body JSON
-// (express.json em server.js) somando todas as fotos de uma mensagem só.
-const MAX_IMAGES_PER_MESSAGE = 4;
-const MAX_IMAGE_BASE64_LENGTH = 1_600_000; // ~1.2MB de imagem já redimensionada no navegador
-// Vídeo de depoimento enviado como ARQUIVO (14/09/2026) — usado quando não
-// existe link de post/reel pra incorporar (ex: só existe como Story, que
-// nunca pode ser embedado — ver instrução de STORY no SYSTEM_PROMPT). Um só
-// por mensagem (é raro precisar de mais de um depoimento em vídeo de uma
-// vez) e limite de tamanho bem maior que foto — combinado com a sócia
-// (~20MB de vídeo bruto). Body limit do server.js foi ajustado junto (35mb).
-const MAX_VIDEOS_PER_MESSAGE = 1;
-const MAX_VIDEO_BASE64_LENGTH = 28_000_000; // ~20MB de vídeo bruto já em base64
-
-// Instruído pra SEMPRE tentar entregar uma primeira versão de cara (mesmo
-// que com escolhas próprias de cor/estilo), do jeito que a gente faz aqui no
-// chat — só pergunta antes de gerar se o pedido for tão vago que não dá nem
-// pra começar. Pedido explícito do usuário (13/09/2026) depois de ver a IA
-// travando em 3 perguntas antes de mostrar qualquer coisa.
-const SYSTEM_PROMPT = `Você é um construtor de sites, usado INTERNAMENTE pela equipe de uma agência de tráfego pago (TurbinaADS) — quem está te pedindo o site é um sócio ou gestor da agência, criando uma landing page ou site para um cliente da agência. Você nunca fala com o cliente final, só com a equipe interna.
-
-MUITO IMPORTANTE — não trave pedindo informação: assim que souber o nicho/negócio e o objetivo básico da página (ex: "landing page pra psicóloga infantil, agendamento via WhatsApp"), gere a primeira versão completa JÁ NESSA RESPOSTA, fazendo escolhas de design (paleta, estilo, textos, seções) por conta própria, do jeito que você faria numa conversa direta comigo — nunca peça uma lista de informações antes de mostrar algo. Só faça uma pergunta objetiva, sem gerar HTML, se o pedido for tão vago que não dá nem pra começar (ex: só "me faz um site"). Depois da primeira versão, o gestor ajusta pedindo mudanças — é assim que o processo funciona, igual uma conversa normal de revisão.
-
-EDIÇÃO DE UM SITE QUE JÁ EXISTE — MUITO IMPORTANTE: se a conversa já tem uma versão anterior do site (o HTML atual aparece pra você como contexto de uma resposta sua anterior), a mensagem nova é um AJUSTE PONTUAL, nunca uma reescrita. Regra fixa: mantenha exatamente os mesmos textos, frases, títulos, ordem das seções, paleta de cores, fontes e estrutura do HTML atual — mude SOMENTE o que foi pedido nessa mensagem específica, palavra por palavra do pedido. Nunca "aproveite" pra reescrever frase, trocar palavra, reorganizar seção, trocar fonte/cor ou "melhorar" qualquer parte que não foi mencionada no pedido, mesmo que pareça uma melhoria — o gestor pode já ter aprovado esse texto/layout com o cliente, e uma mudança não pedida quebra a aprovação. Na prática: parta do HTML atual quase copiado igual, e aplique só a alteração pontual solicitada nele. As instruções de "PADRÃO DE QUALIDADE VISUAL" mais abaixo (escolha de fonte, paleta, tom do hero etc.) valem pra quando você está criando a PRIMEIRA versão do site do zero — numa edição de algo que já existe, elas não autorizam redesenhar nada que não foi pedido.
-
-FOTOS: quando a mensagem do usuário incluir uma lista de "Fotos disponíveis nesse projeto", você TEM que usar essas fotos nas tags <img> da página, usando exatamente o token indicado dentro do atributo src, assim: <img src="{{FOTO:foto-1}}" alt="descrição real da foto">. Essa lista, sempre que aparecer, é a fonte de verdade ATUAL — use SÓ os tokens que estão nela nessa mensagem, mesmo que uma versão anterior do HTML (reenviada como contexto) mencione outro número de foto; nunca reaproveite de memória um token de uma resposta antiga sem conferir se ele ainda está na lista atual. Nunca invente outro token, nunca escreva a foto errada pro lugar errado (ex: não bote uma foto de fachada como se fosse retrato de pessoa) — você pode VER cada foto anexada na conversa, use isso pra decidir onde cada uma fica melhor (hero, seção "sobre", galeria etc). NUNCA use um link de imagem externo (unsplash, placeholder.com, etc) nem invente um src que não seja um token de foto real — se a página pede uma imagem e não tem nenhuma foto disponível ainda, resolva com design (gradiente, ícone, formas), nunca com uma URL inventada.
-
-VÍDEOS (ex: depoimento em vídeo) — existem DUAS formas de receber um vídeo, nunca finja que é vídeo usando uma foto/print:
-- ARQUIVO DE VÍDEO enviado direto (quando a mensagem do usuário incluir uma lista de "Vídeos disponíveis nesse projeto"): use o token exatamente como veio, dentro de um player de vídeo de verdade, assim:
-  <video controls playsinline style="width:100%;max-width:560px;display:block;margin:0 auto;border-radius:8px;"><source src="{{VIDEO:video-1}}"></video>
-  Nunca invente outro token, nunca escreva "type" no <source> (o navegador reconhece sozinho pelo conteúdo). Essa lista, igual a de fotos, é a fonte de verdade ATUAL — nunca reaproveite de memória um token de vídeo de uma resposta antiga sem conferir se ele ainda está na lista atual dessa mensagem.
-- LINK de vídeo (post ou reel do Instagram, YouTube, TikTok) — quando o usuário mandar um link em vez de arquivo, incorpore um player de verdade:
-- ATENÇÃO — link de STORY do Instagram (contém "/s/" ou "story_media_id=" ou "stories/" na URL) NUNCA pode virar um player embutido — o Instagram não permite embed de story em nenhum site de fora (é uma limitação da própria plataforma, não algo que dê pra contornar com código: story é conteúdo privado/de 24h, diferente de post e reel, que são públicos e permanentes). Se o link enviado for desse tipo, NÃO tente gerar nenhum embed (nem tente de novo se o usuário reenviar o mesmo link story) — em vez disso, no seu comentário curto, explique isso claramente e peça o link de um POST ou REEL (esses sim têm embed oficial) ou o arquivo de vídeo em si.
-- Instagram (post ou reel — link contém "/p/" ou "/reel/"): use exatamente esse embed oficial, só trocando o link pelo que foi enviado:
-  <blockquote class="instagram-media" data-instgrm-permalink="LINK_COMPLETO_AQUI" style="max-width:540px;margin:0 auto;"></blockquote><script async src="//www.instagram.com/embed.js"></script>
-- YouTube: extraia o ID do vídeo do link (a parte depois de "watch?v=" ou depois de "youtu.be/") e use:
-  <iframe style="width:100%;aspect-ratio:16/9;border:0;" src="https://www.youtube.com/embed/ID_DO_VIDEO" title="Depoimento em vídeo" allowfullscreen></iframe>
-- Se o link for de outra plataforma (TikTok, Vimeo) e você não tiver certeza de como montar o embed certo, NÃO invente um player quebrado — em vez disso, monte um cartão/botão elegante "▶ Ver depoimento" que abre o link original numa aba nova (target="_blank"), combinando com o resto do design.
-- NUNCA chame uma foto/print de "vídeo". Se o usuário só anexou uma imagem (print/screenshot) e não mandou nenhum link de vídeo de verdade nem arquivo de vídeo, use essa imagem como uma FOTO normal (token {{FOTO:x}}) e diga claramente no seu comentário que é uma imagem estática.
-- Aviso técnico pra você (não precisa repetir isso pro usuário toda hora): o player de ARQUIVO de vídeo (token {{VIDEO:x}}) funciona normalmente na prévia dentro do painel, igual foto. Só os embeds por LINK (Instagram/TikTok) que dependem de script externo é que às vezes não renderizam na prévia (roda numa aba restrita) mesmo estando corretos — esses só funcionam garantido no site já publicado de verdade.
-
-PADRÃO DE QUALIDADE VISUAL — o mesmo cuidado de design usado numa conversa direta pra criar site, nunca o resultado genérico de "gerador automático de landing page":
-- Baseie cada escolha no negócio/pessoa REAL descrito na conversa — nunca um layout que serviria igual pra qualquer nicho. Textos específicos e reais (nunca "Lorem ipsum", nunca frase vazia tipo "Bem-vindo ao nosso site" ou "Transforme sua vida hoje").
-- Escolha DUAS fontes do Google Fonts que combinem entre si e com o tom do negócio — uma de destaque pra títulos (com personalidade — serif editorial pra algo acolhedor/terapêutico, geométrica forte pra algo técnico/moderno, etc.) e uma discreta pro texto corrido. Nunca as escolhas óbvias demais sem motivo (Inter/Roboto puro, Poppins genérico).
-- Defina uma paleta de cor intencional — 3 a 5 cores, incluindo um neutro que não seja cinza puro. NUNCA as combinações batidas de site gerado por IA: creme + terracota, preto quase puro com um verde-neon isolado, gradiente roxo-pro-azul em fundo branco. A cor de destaque tem que ter a ver com o nicho (e com as cores da marca do cliente, se souber quais são).
-- A seção de abertura (hero) é a tese da página — abra com a coisa mais característica daquele negócio: a foto certa, uma frase de posicionamento real e específica, nunca um clichê genérico.
-- Evite os vícios visuais de site feito por IA: tudo centralizado, cantos arredondados em toda superfície sem motivo, cards com barrinha colorida do lado, emoji como marcador de seção, número decorativo (01/02/03) sem o conteúdo ser de fato uma sequência. Cada decisão de layout precisa ter uma razão ligada ao conteúdo.
-- Responsivo de verdade (funciona bem no celular, não só no preview de desktop), hierarquia tipográfica clara, espaço de respiro generoso entre seções — nunca tudo grudado.
-- No comentário curto antes do bloco de código, mencione rapidamente a escolha de estilo (cor, fonte, tom) — assim quem está pedindo entende a decisão de design, não só recebe "site pronto".
-
-Sempre que for ENTREGAR ou ATUALIZAR o site, responda EXATAMENTE neste formato:
-1. Uma ou duas frases curtas em português contando o que você fez (ou o que mudou).
-2. Um bloco de código começando com \`\`\`html e terminando com \`\`\`, contendo a página COMPLETA: um único arquivo HTML autossuficiente, com todo CSS e JS embutido dentro do próprio <head>/<body> (nada de arquivo externo, exceto uma fonte do Google Fonts se fizer sentido, e as tags {{FOTO:token}} descritas acima). Sempre mande o HTML inteiro atualizado nesse bloco, nunca só o trecho que mudou — quem lê essa mensagem substitui a prévia inteira pelo conteúdo desse bloco.
-
-Boas práticas obrigatórias: layout responsivo (funciona bem no celular), hierarquia tipográfica clara, paleta de cores coerente com o nicho/marca do cliente. Nunca inclua comentários de desculpa ou explicações longas fora das duas frases iniciais — o gestor só quer ver o resultado.`;
-
-function extractHtml(text) {
-  const m = String(text || "").match(/```html\s*([\s\S]*?)```/i);
-  return m ? m[1].trim() : null;
-}
-
-function stripHtmlBlock(text) {
-  return String(text || "").replace(/```html[\s\S]*?```/i, "").trim();
-}
-
-// Troca cada {{FOTO:token}} pela foto de verdade (data URL) — feito só na
-// hora de SERVIR o HTML (prévia/download), nunca antes de guardar no banco
-// nem antes de reenviar como contexto pra IA (ver buildSiteApiMessages).
-// Placeholder neutro (cinza-claro, sem texto/ícone) pra quando a IA referencia
-// um token que não existe de verdade (ex: reaproveitou um número de foto de
-// uma versão anterior da conversa) — evita um ícone de "imagem quebrada"
-// piscando na tela, que é exatamente a cara de "bug" pro usuário.
-const MISSING_FOTO_PLACEHOLDER =
-  "data:image/svg+xml;utf8," +
-  encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="800"><rect width="100%" height="100%" fill="#e5e2dc"/></svg>');
-
-function substituteFotos(html, images) {
-  if (!html) return html;
-  return html.replace(/\{\{FOTO:([a-zA-Z0-9_-]+)\}\}/g, (match, token) => {
-    const img = images.find((i) => i.token === token);
-    return img ? `data:${img.mimeType};base64,${img.dataBase64}` : MISSING_FOTO_PLACEHOLDER;
-  });
-}
-
-// Mesmo princípio da substituição de fotos, pra vídeo enviado como arquivo
-// (14/09/2026) — token {{VIDEO:x}}, trocado pelo vídeo de verdade (data URL)
-// só na hora de servir/publicar. Token não encontrado vira string vazia (o
-// <video> fica sem fonte — um player vazio é bem menos "bugado" na tela do
-// que um ícone de imagem quebrada, então não precisa de placeholder aqui).
-function substituteVideos(html, videos) {
-  if (!html) return html;
-  return html.replace(/\{\{VIDEO:([a-zA-Z0-9_-]+)\}\}/g, (match, token) => {
-    const vid = videos.find((v) => v.token === token);
-    return vid ? `data:${vid.mimeType};base64,${vid.dataBase64}` : "";
-  });
-}
-
-// Busca o HTML mais recente do projeto (ainda com token, {{FOTO:x}} /
-// {{VIDEO:x}}) e todas as fotos/vídeos disponíveis — usado tanto na tela do
-// chat (GET /:id) quanto na publicação (POST /:id/publish), pra não
-// duplicar a mesma consulta.
-async function getRawHtmlAndMedia(projectId) {
-  const [rows, images, videos] = await Promise.all([
-    prisma.aiSiteMessage.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 40, select: { htmlSnapshot: true } }),
-    prisma.aiSiteImage.findMany({ where: { projectId } }),
-    prisma.aiSiteVideo.findMany({ where: { projectId } }),
-  ]);
-  const rawHtml = rows.find((r) => r.htmlSnapshot)?.htmlSnapshot || null;
-  return { rawHtml, images, videos };
-}
+// ~30MB de HTML como texto — folga generosa sob o limite de 35mb do body
+// JSON (server.js), já que o HTML pode ter fotos/vídeo embutidos como
+// data URL (o mesmo jeito que a IA aqui no chat entrega os sites).
+const MAX_HTML_LENGTH = 30_000_000;
 
 async function assertProjectAccess(req, id) {
   const project = await prisma.aiSiteProject.findUnique({ where: { id } });
@@ -130,254 +24,124 @@ async function assertProjectAccess(req, id) {
   return null;
 }
 
-// Monta as mensagens pra API a partir do histórico salvo: só a ÚLTIMA
-// mensagem do assistente mantém o HTML completo (é o que a IA precisa ver
-// pra editar a versão atual); turnos anteriores com site têm o HTML trocado
-// por um resumo curto, senão o custo/tokens de uma conversa longa explodiria
-// reenviando cada versão inteira da página a cada mensagem nova — mesmo
-// princípio já usado em ai.js pra anexos antigos (buildApiMessages). O HTML
-// guardado/reenviado aqui é sempre a versão COM TOKEN ({{FOTO:x}}), nunca
-// com a foto de verdade embutida — senão o custo de tokens explodiria junto.
-function buildSiteApiMessages(rows) {
-  return rows.map((row, i) => {
-    const isLast = i === rows.length - 1;
-    if (row.role === "assistant" && row.htmlSnapshot && !isLast) {
-      const comentario = stripHtmlBlock(row.content);
-      return {
-        role: "assistant",
-        content: `${comentario}\n\n[versão do site gerada nesse turno — omitida aqui pra não repetir HTML inteiro a cada mensagem; a versão mais atual é reenviada normalmente]`,
-      };
-    }
-    return { role: row.role, content: row.content };
-  });
+function serialize(p) {
+  return {
+    id: p.id,
+    name: p.name,
+    subdomain: p.subdomain,
+    clientId: p.clientId,
+    clientName: p.client?.name || null,
+    createdByName: p.createdBy?.name || null,
+    netlifyUrl: p.netlifyUrl,
+    publishedAt: p.publishedAt,
+    updatedAt: p.updatedAt,
+  };
 }
 
+// Lista sites publicados — opcionalmente filtrado por cliente (usado dentro
+// da própria página do cliente, pra mostrar só o site dele ali).
 router.get("/", async (req, res) => {
   const where = req.user.role === "SOCIO" ? {} : { createdById: req.user.id };
+  if (req.query.clientId) where.clientId = req.query.clientId;
+
   const projects = await prisma.aiSiteProject.findMany({
     where,
     orderBy: { updatedAt: "desc" },
-    include: { client: { select: { name: true } }, createdBy: { select: { name: true } }, _count: { select: { messages: true } } },
+    include: { client: { select: { name: true } }, createdBy: { select: { name: true } } },
   });
-  res.json({
-    projects: projects.map((p) => ({
-      id: p.id,
-      name: p.name,
-      clientName: p.client?.name || null,
-      createdByName: p.createdBy?.name || null,
-      updatedAt: p.updatedAt,
-      messageCount: p._count.messages,
-    })),
-  });
-});
-
-router.post("/", async (req, res) => {
-  const { name, clientId } = req.body || {};
-  if (!name || !String(name).trim()) return res.status(400).json({ error: "Dê um nome pro projeto." });
-
-  let client = null;
-  if (clientId) {
-    client =
-      req.user.role === "SOCIO"
-        ? await prisma.client.findUnique({ where: { id: clientId } })
-        : await prisma.client.findFirst({ where: { id: clientId, gestorId: req.user.id } });
-    if (!client) return res.status(404).json({ error: "Cliente não encontrado ou sem acesso." });
-  }
-
-  const project = await prisma.aiSiteProject.create({
-    data: { name: String(name).trim(), clientId: client?.id || null, createdById: req.user.id },
-  });
-  res.status(201).json(project);
+  res.json({ projects: projects.map(serialize) });
 });
 
 router.get("/:id", async (req, res) => {
-  const project = await assertProjectAccess(req, req.params.id);
-  if (!project) return res.status(404).json({ error: "Projeto não encontrado ou sem acesso." });
-
-  const [rows, images, videos] = await Promise.all([
-    prisma.aiSiteMessage.findMany({ where: { projectId: project.id }, orderBy: { createdAt: "asc" } }),
-    prisma.aiSiteImage.findMany({ where: { projectId: project.id }, select: { id: true, token: true, name: true, messageId: true } }),
-    prisma.aiSiteVideo.findMany({ where: { projectId: project.id }, select: { id: true, token: true, name: true, messageId: true } }),
-  ]);
-
-  const messages = rows.map((r) => ({
-    id: r.id,
-    role: r.role,
-    text: r.role === "assistant" ? stripHtmlBlock(r.content) || "✅ Site atualizado — veja a prévia." : r.content,
-    hasHtml: !!r.htmlSnapshot,
-    imageCount: images.filter((img) => img.messageId === r.id).length,
-    videoCount: videos.filter((v) => v.messageId === r.id).length,
-    createdAt: r.createdAt,
-  }));
-  const rawHtml = [...rows].reverse().find((r) => r.htmlSnapshot)?.htmlSnapshot || null;
-
-  res.json({
-    project,
-    messages,
-    currentHtml: substituteVideos(substituteFotos(rawHtml, images), videos),
-    photoCount: images.length,
-    videoCount: videos.length,
+  const project = await prisma.aiSiteProject.findUnique({
+    where: { id: req.params.id },
+    include: { client: { select: { name: true } }, createdBy: { select: { name: true } } },
   });
+  if (!project) return res.status(404).json({ error: "Site não encontrado." });
+  if (req.user.role !== "SOCIO" && project.createdById !== req.user.id) {
+    return res.status(404).json({ error: "Site não encontrado ou sem acesso." });
+  }
+  res.json(serialize(project));
 });
 
 router.delete("/:id", async (req, res) => {
   const project = await assertProjectAccess(req, req.params.id);
-  if (!project) return res.status(404).json({ error: "Projeto não encontrado ou sem acesso." });
+  if (!project) return res.status(404).json({ error: "Site não encontrado ou sem acesso." });
+  // Só apaga o registro aqui dentro do sistema — não derruba o site lá na
+  // Netlify (evita apagar sem querer um site que o cliente já divulgou).
   await prisma.aiSiteProject.delete({ where: { id: project.id } });
   res.status(204).end();
 });
 
-// Publica o site gerado direto na Netlify (14/09/2026) — primeira vez cria
-// o site lá, publicações seguintes do mesmo projeto atualizam o mesmo link
-// (netlifySiteId salvo no projeto) em vez de gerar um novo toda hora.
-router.post("/:id/publish", async (req, res) => {
-  const project = await assertProjectAccess(req, req.params.id);
-  if (!project) return res.status(404).json({ error: "Projeto não encontrado ou sem acesso." });
-
+// Publica um HTML pronto — sem projectId cria um site novo (com o
+// subdomínio escolhido); com projectId atualiza o conteúdo do mesmo site já
+// existente (mantém o mesmo link, ignora o campo subdomain no corpo).
+router.post("/publish", async (req, res) => {
   if (!isNetlifyConfigured()) {
     return res.status(501).json({ error: "Publicação ainda não configurada — falta a chave da Netlify (NETLIFY_TOKEN) nas variáveis de ambiente do backend." });
   }
 
-  const { rawHtml, images, videos } = await getRawHtmlAndMedia(project.id);
-  if (!rawHtml) return res.status(400).json({ error: "Ainda não há nenhum site gerado nesse projeto pra publicar." });
-  const html = substituteVideos(substituteFotos(rawHtml, images), videos);
+  const { projectId, name, subdomain, clientId, html } = req.body || {};
 
-  try {
-    const { siteId, url } = await publishHtml({ existingSiteId: project.netlifySiteId, name: project.name, html });
-    await prisma.aiSiteProject.update({ where: { id: project.id }, data: { netlifySiteId: siteId, netlifyUrl: url, publishedAt: new Date() } });
-    res.json({ url });
-  } catch (err) {
-    res.status(err.notConfigured ? 501 : 502).json({ error: err.message });
+  if (!html || typeof html !== "string" || !html.trim()) {
+    return res.status(400).json({ error: "Anexe o arquivo .html do site." });
   }
-});
-
-router.post("/:id/messages", async (req, res) => {
-  const project = await assertProjectAccess(req, req.params.id);
-  if (!project) return res.status(404).json({ error: "Projeto não encontrado ou sem acesso." });
-
-  const { message, images: newImagesInput, videos: newVideosInput } = req.body || {};
-  if (!message || !String(message).trim()) return res.status(400).json({ error: "Escreva uma mensagem." });
-  const userText = String(message).trim();
-
-  const newImages = Array.isArray(newImagesInput) ? newImagesInput.slice(0, MAX_IMAGES_PER_MESSAGE) : [];
-  for (const img of newImages) {
-    if (!img || typeof img.dataBase64 !== "string" || !img.dataBase64) {
-      return res.status(400).json({ error: "Foto inválida no anexo." });
-    }
-    if (!img.mimeType || !String(img.mimeType).startsWith("image/")) {
-      return res.status(400).json({ error: "Só é possível anexar arquivos de imagem." });
-    }
-    if (img.dataBase64.length > MAX_IMAGE_BASE64_LENGTH) {
-      return res.status(400).json({ error: "Uma das fotos ficou grande demais mesmo depois de redimensionada — tente outra." });
-    }
-  }
-
-  const newVideos = Array.isArray(newVideosInput) ? newVideosInput.slice(0, MAX_VIDEOS_PER_MESSAGE) : [];
-  for (const vid of newVideos) {
-    if (!vid || typeof vid.dataBase64 !== "string" || !vid.dataBase64) {
-      return res.status(400).json({ error: "Vídeo inválido no anexo." });
-    }
-    if (!vid.mimeType || !String(vid.mimeType).startsWith("video/")) {
-      return res.status(400).json({ error: "Só é possível anexar arquivos de vídeo." });
-    }
-    if (vid.dataBase64.length > MAX_VIDEO_BASE64_LENGTH) {
-      return res.status(400).json({ error: "O vídeo ficou grande demais (máximo ~20MB) — tente comprimir ou cortar antes de anexar." });
-    }
+  if (html.length > MAX_HTML_LENGTH) {
+    return res.status(400).json({ error: "Esse arquivo HTML ficou grande demais pra publicar." });
   }
 
   try {
-    // Salva a mensagem do usuário já de cara — mesmo que a chamada à IA
-    // falhe depois, o que foi digitado/anexado não se perde.
-    const userRow = await prisma.aiSiteMessage.create({ data: { projectId: project.id, role: "user", content: userText } });
-
-    // Cada foto ganha um token sequencial ÚNICO dentro do projeto inteiro
-    // (não só dessa mensagem) — assim a IA consegue reusar fotos de
-    // mensagens anteriores em edições futuras, sem precisar reenviá-las.
-    const existingCount = await prisma.aiSiteImage.count({ where: { projectId: project.id } });
-    const createdImages = [];
-    for (let i = 0; i < newImages.length; i++) {
-      const img = newImages[i];
-      const token = `foto-${existingCount + i + 1}`;
-      const row = await prisma.aiSiteImage.create({
-        data: {
-          projectId: project.id,
-          messageId: userRow.id,
-          token,
-          name: img.name ? String(img.name).slice(0, 200) : null,
-          mimeType: img.mimeType,
-          dataBase64: img.dataBase64,
-        },
-      });
-      createdImages.push(row);
+    let project = null;
+    if (projectId) {
+      project = await assertProjectAccess(req, projectId);
+      if (!project) return res.status(404).json({ error: "Site não encontrado ou sem acesso." });
+    } else {
+      if (!name || !String(name).trim()) return res.status(400).json({ error: "Dê um nome pro site." });
+      if (!subdomain || !slugify(subdomain)) return res.status(400).json({ error: "Escolha um início de subdomínio válido (letras e números)." });
     }
 
-    // Mesmo princípio das fotos, mas em token separado ("video-N") — nunca
-    // mandado como conteúdo de visão pra API da Claude (ela não aceita
-    // vídeo nesse formato), só descrito por texto na listagem abaixo.
-    const existingVideoCount = await prisma.aiSiteVideo.count({ where: { projectId: project.id } });
-    const createdVideos = [];
-    for (let i = 0; i < newVideos.length; i++) {
-      const vid = newVideos[i];
-      const token = `video-${existingVideoCount + i + 1}`;
-      const row = await prisma.aiSiteVideo.create({
-        data: {
-          projectId: project.id,
-          messageId: userRow.id,
-          token,
-          name: vid.name ? String(vid.name).slice(0, 200) : null,
-          mimeType: vid.mimeType,
-          dataBase64: vid.dataBase64,
-        },
-      });
-      createdVideos.push(row);
+    let client = null;
+    if (clientId) {
+      client =
+        req.user.role === "SOCIO"
+          ? await prisma.client.findUnique({ where: { id: clientId } })
+          : await prisma.client.findFirst({ where: { id: clientId, gestorId: req.user.id } });
+      if (!client) return res.status(404).json({ error: "Cliente não encontrado ou sem acesso." });
     }
 
-    const priorRows = await prisma.aiSiteMessage.findMany({
-      where: { projectId: project.id, id: { not: userRow.id } },
-      orderBy: { createdAt: "desc" },
-      take: MAX_HISTORY_MESSAGES,
-      select: { role: true, content: true, htmlSnapshot: true },
+    const { siteId, url, name: netlifyName } = await publishHtml({
+      existingSiteId: project?.netlifySiteId || null,
+      subdomain: project ? project.subdomain : subdomain,
+      html,
     });
-    priorRows.reverse();
 
-    // Lista de TODAS as fotos já disponíveis nesse projeto (não só as novas
-    // dessa mensagem) — garante que a IA saiba dos tokens mesmo em edições
-    // futuras sem precisar re-enviar/re-ver a foto de novo.
-    const allImages = await prisma.aiSiteImage.findMany({ where: { projectId: project.id }, orderBy: { createdAt: "asc" } });
-    const allVideos = await prisma.aiSiteVideo.findMany({ where: { projectId: project.id }, orderBy: { createdAt: "asc" } });
-
-    let userContent = userText;
-    if (allImages.length) {
-      const listagem = allImages.map((img) => `${img.token} (${img.name || "sem nome"})`).join(", ");
-      userContent = `${userContent}\n\n[Fotos disponíveis nesse projeto — use exatamente esse token dentro de src="{{FOTO:token}}" numa tag <img>, nunca invente outro token nem use URL externa: ${listagem}]`;
-    }
-    if (allVideos.length) {
-      const listagemVideos = allVideos.map((v) => `${v.token} (${v.name || "sem nome"})`).join(", ");
-      userContent = `${userContent}\n\n[Vídeos disponíveis nesse projeto (arquivo enviado direto, não link) — use exatamente esse token dentro de <source src="{{VIDEO:token}}"> num player <video>, nunca invente outro token: ${listagemVideos}]`;
-    }
-    // As fotos ANEXADAS NESSA MENSAGEM (não as antigas) viram blocos de
-    // imagem de verdade, pra IA poder efetivamente ver o conteúdo de cada
-    // uma e decidir onde cada uma fica melhor no layout.
-    if (createdImages.length) {
-      const blocks = [{ type: "text", text: userContent }];
-      for (const img of createdImages) {
-        blocks.push({ type: "image", source: { type: "base64", media_type: img.mimeType, data: img.dataBase64 } });
-        blocks.push({ type: "text", text: `(a foto acima é o token ${img.token})` });
-      }
-      userContent = blocks;
+    if (project) {
+      project = await prisma.aiSiteProject.update({
+        where: { id: project.id },
+        data: {
+          netlifySiteId: siteId,
+          netlifyUrl: url,
+          publishedAt: new Date(),
+          ...(clientId !== undefined ? { clientId: client?.id || null } : {}),
+        },
+        include: { client: { select: { name: true } }, createdBy: { select: { name: true } } },
+      });
+    } else {
+      project = await prisma.aiSiteProject.create({
+        data: {
+          name: String(name).trim(),
+          subdomain: netlifyName || slugify(subdomain),
+          clientId: client?.id || null,
+          createdById: req.user.id,
+          netlifySiteId: siteId,
+          netlifyUrl: url,
+          publishedAt: new Date(),
+        },
+        include: { client: { select: { name: true } }, createdBy: { select: { name: true } } },
+      });
     }
 
-    const apiMessages = buildSiteApiMessages([...priorRows, { role: "user", content: userContent, htmlSnapshot: null }]);
-    const raw = await callClaudeRaw({ system: SYSTEM_PROMPT, messages: apiMessages, maxTokens: MAX_TOKENS });
-    const html = extractHtml(raw); // guardado/reenviado sempre com token, nunca com a foto embutida
-
-    await prisma.aiSiteMessage.create({ data: { projectId: project.id, role: "assistant", content: raw, htmlSnapshot: html } });
-    await prisma.aiSiteProject.update({ where: { id: project.id }, data: { updatedAt: new Date() } });
-
-    res.json({
-      text: stripHtmlBlock(raw) || "✅ Site atualizado — veja a prévia.",
-      htmlSnapshot: substituteVideos(substituteFotos(html, allImages), allVideos),
-    });
+    res.json(serialize(project));
   } catch (err) {
     res.status(err.notConfigured ? 501 : 502).json({ error: err.message });
   }

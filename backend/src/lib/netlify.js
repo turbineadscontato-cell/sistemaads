@@ -51,24 +51,37 @@ async function netlifyRequest(path, { method = "GET", body, isZip = false } = {}
   return data;
 }
 
-// Cria um site novo na Netlify (nome sugerido a partir do nome do projeto —
-// a Netlify garante um nome único por conta própria se já estiver em uso,
-// trocando por um sufixo aleatório).
-async function createSite(suggestedName) {
-  const slug = String(suggestedName || "site")
+// Transforma o texto que a pessoa digitou no formato que a Netlify aceita
+// como início do subdomínio (só letras minúsculas, número e hífen).
+function slugify(text) {
+  return String(text || "")
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "") // remove acentos (marcas diacriticas isoladas pelo NFD acima)
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 40);
-  try {
-    return await netlifyRequest("/sites", { method: "POST", body: { name: `turbinaads-${slug || "site"}` } });
-  } catch (err) {
-    // Nome já em uso ou inválido — deixa a Netlify escolher um nome
-    // aleatório em vez de travar a publicação por causa do nome.
-    return await netlifyRequest("/sites", { method: "POST", body: {} });
+}
+
+// Cria um site novo na Netlify usando EXATAMENTE o subdomínio que a pessoa
+// escolheu (ex: "dra-ana" vira dra-ana.netlify.app) — pedido explícito da
+// sócia (14/09/2026) pra poder escolher o início do link. Um subdomínio da
+// Netlify é único entre TODOS os usuários da Netlify no mundo, então, se o
+// nome exato já estiver em uso, tenta "nome-2", "nome-3"... antes de
+// desistir e deixar a Netlify escolher um nome aleatório.
+async function createSite(desiredSubdomain) {
+  const base = slugify(desiredSubdomain) || "site";
+  const attempts = [base, `${base}-2`, `${base}-3`, `${base}-4`, `${base}-5`];
+  for (const slug of attempts) {
+    try {
+      return await netlifyRequest("/sites", { method: "POST", body: { name: slug } });
+    } catch (err) {
+      // Nome já em uso ou inválido — tenta o próximo da lista.
+    }
   }
+  // Todas as variações já estavam em uso — deixa a Netlify escolher um
+  // nome aleatório em vez de travar a publicação por causa do nome.
+  return await netlifyRequest("/sites", { method: "POST", body: {} });
 }
 
 // Sobe um HTML pronto como um site de página única — monta um .zip só com
@@ -84,10 +97,12 @@ async function deploySite(siteId, html) {
   return deploy;
 }
 
-// Publica (cria o site na primeira vez, reaproveita depois) e devolve o
-// link público em https. `existingSiteId` vem do projeto salvo — se já
-// existir, publica em cima do mesmo site (mesmo link) em vez de criar outro.
-async function publishHtml({ existingSiteId, name, html }) {
+// Publica (cria o site na primeira vez com o subdomínio escolhido, reaproveita
+// depois) e devolve o link público em https. `existingSiteId` vem do
+// registro salvo — se já existir, publica em cima do mesmo site (mesmo
+// link, ignora `subdomain` — não dá pra trocar o subdomínio de um site já
+// criado por essa rota simples) em vez de criar outro.
+async function publishHtml({ existingSiteId, subdomain, html }) {
   let site = null;
   if (existingSiteId) {
     try {
@@ -96,10 +111,10 @@ async function publishHtml({ existingSiteId, name, html }) {
       site = null; // site pode ter sido apagado direto na Netlify — cria de novo
     }
   }
-  if (!site) site = await createSite(name);
+  if (!site) site = await createSite(subdomain);
 
   await deploySite(site.id, html);
-  return { siteId: site.id, url: site.ssl_url || site.url };
+  return { siteId: site.id, url: site.ssl_url || site.url, name: site.name };
 }
 
-module.exports = { isNetlifyConfigured, publishHtml };
+module.exports = { isNetlifyConfigured, publishHtml, slugify };

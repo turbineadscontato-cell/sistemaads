@@ -337,7 +337,7 @@ export default function AIAssistants() {
         </button>
         <button onClick={() => setView("site")}
           className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${view === "site" ? "bg-accent text-white" : "text-inksoft hover:text-ink"}`}>
-          🌐 Criar site
+          🌐 Publicar site
         </button>
       </div>
 
