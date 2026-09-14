@@ -92,6 +92,12 @@ async function createSite(desiredSubdomain) {
 async function deploySite(siteId, html) {
   const zip = new JSZip();
   zip.file("index.html", html);
+  // Arquivo especial da Netlify (_headers) forçando o tipo certo de
+  // conteúdo em toda página — proteção extra depois de um caso real
+  // (14/09/2026) onde o navegador mostrou o CSS cru em vez do site
+  // renderizado, sinal de que o arquivo tinha sido servido com o tipo
+  // errado em vez de "text/html". Documentação: docs.netlify.com/routing/headers.
+  zip.file("_headers", "/*\n  Content-Type: text/html; charset=utf-8\n");
   const zipBuffer = await zip.generateAsync({ type: "nodebuffer" });
   const deploy = await netlifyRequest(`/sites/${siteId}/deploys`, { method: "POST", body: zipBuffer, isZip: true });
   return deploy;
