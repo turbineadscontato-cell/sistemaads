@@ -647,6 +647,14 @@ model AiSiteProject {
   // na hora de mostrar/baixar a página. Ver routes/aiSites.js.
   images AiSiteImage[]
 
+  // Publicação direta na Netlify (14/09/2026) — netlifySiteId é o "site" lá
+  // dentro (criado uma vez só, reaproveitado em toda publicação seguinte do
+  // mesmo projeto, pra sempre cair no mesmo link em vez de gerar um novo
+  // toda hora); netlifyUrl é o link público (https://algo.netlify.app).
+  netlifySiteId String?
+  netlifyUrl    String?
+  publishedAt   DateTime?
+
   @@index([createdById, updatedAt])
 }
 

@@ -2,6 +2,7 @@ const express = require("express");
 const prisma = require("../prisma");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { callClaudeRaw } = require("../lib/claude");
+const { isNetlifyConfigured, publishHtml } = require("../lib/netlify");
 
 // Construtor de sites com IA — chat + prévia ao vivo, uso INTERNO (só
 // sócio/gestor, nunca atendente/cliente). Cada "projeto" é uma conversa que
@@ -52,6 +53,18 @@ function substituteFotos(html, images) {
     const img = images.find((i) => i.token === token);
     return img ? `data:${img.mimeType};base64,${img.dataBase64}` : "";
   });
+}
+
+// Busca o HTML mais recente do projeto (ainda com token, {{FOTO:x}}) e todas
+// as fotos disponíveis — usado tanto na tela do chat (GET /:id) quanto na
+// publicação (POST /:id/publish), pra não duplicar a mesma consulta.
+async function getRawHtmlAndImages(projectId) {
+  const [rows, images] = await Promise.all([
+    prisma.aiSiteMessage.findMany({ where: { projectId }, orderBy: { createdAt: "desc" }, take: 40, select: { htmlSnapshot: true } }),
+    prisma.aiSiteImage.findMany({ where: { projectId } }),
+  ]);
+  const rawHtml = rows.find((r) => r.htmlSnapshot)?.htmlSnapshot || null;
+  return { rawHtml, images };
 }
 
 async function assertProjectAccess(req, id) {
@@ -153,6 +166,30 @@ router.delete("/:id", async (req, res) => {
   if (!project) return res.status(404).json({ error: "Projeto não encontrado ou sem acesso." });
   await prisma.aiSiteProject.delete({ where: { id: project.id } });
   res.status(204).end();
+});
+
+// Publica o site gerado direto na Netlify (14/09/2026) — primeira vez cria
+// o site lá, publicações seguintes do mesmo projeto atualizam o mesmo link
+// (netlifySiteId salvo no projeto) em vez de gerar um novo toda hora.
+router.post("/:id/publish", async (req, res) => {
+  const project = await assertProjectAccess(req, req.params.id);
+  if (!project) return res.status(404).json({ error: "Projeto não encontrado ou sem acesso." });
+
+  if (!isNetlifyConfigured()) {
+    return res.status(501).json({ error: "Publicação ainda não configurada — falta a chave da Netlify (NETLIFY_TOKEN) nas variáveis de ambiente do backend." });
+  }
+
+  const { rawHtml, images } = await getRawHtmlAndImages(project.id);
+  if (!rawHtml) return res.status(400).json({ error: "Ainda não há nenhum site gerado nesse projeto pra publicar." });
+  const html = substituteFotos(rawHtml, images);
+
+  try {
+    const { siteId, url } = await publishHtml({ existingSiteId: project.netlifySiteId, name: project.name, html });
+    await prisma.aiSiteProject.update({ where: { id: project.id }, data: { netlifySiteId: siteId, netlifyUrl: url, publishedAt: new Date() } });
+    res.json({ url });
+  } catch (err) {
+    res.status(err.notConfigured ? 501 : 502).json({ error: err.message });
+  }
 });
 
 router.post("/:id/messages", async (req, res) => {
